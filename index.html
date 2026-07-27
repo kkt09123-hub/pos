@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>매점 바코드 조회</title>
+<style>
+  :root{
+    --bg:#f3f5f7; --panel:#fff; --ink:#191f28; --ink2:#4e5968; --muted:#8b95a1;
+    --line:#e9ecef; --line2:#dde1e6; --blue:#3182f6; --blue-soft:#e8f3ff;
+    --green:#15b76d; --green-soft:#e6f9f1; --red:#e5484d; --red-soft:#ffeaea; --amber:#f08c00;
+    --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.04),0 2px 8px rgba(16,24,40,.05);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font-family:"Malgun Gothic","맑은 고딕",-apple-system,"Segoe UI",sans-serif;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .logo{font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .logo b{color:var(--blue)}
+  .tabs{display:flex;gap:6px;background:var(--panel);padding:5px;border-radius:12px;box-shadow:var(--shadow)}
+  .tabs button{border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:700;padding:9px 16px;border-radius:9px;cursor:pointer}
+  .tabs button.on{background:var(--blue);color:#fff}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+  .pad{padding:18px}
+  input,button{font-family:inherit}
+  .scan-in{width:100%;font-size:26px;font-weight:800;padding:18px 20px;border:2px solid var(--line2);border-radius:12px;outline:none;letter-spacing:.02em}
+  .scan-in:focus{border-color:var(--blue)}
+  .hint{color:var(--muted);font-size:13px;margin-top:8px;text-align:center}
+  .display{margin-top:16px;min-height:200px;display:flex;align-items:center;justify-content:center;text-align:center}
+  .prod-name{font-size:34px;font-weight:800;line-height:1.2;word-break:keep-all}
+  .prod-price{font-size:64px;font-weight:900;letter-spacing:-.02em;margin-top:6px}
+  .prod-code{color:var(--muted);font-size:14px;margin-top:12px;font-variant-numeric:tabular-nums}
+  .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:13px;font-weight:800;margin-bottom:14px}
+  .idle{color:var(--muted);font-size:17px}
+  .reg{max-width:420px;margin:0 auto;text-align:left}
+  .reg label{display:block;font-size:13px;color:var(--muted);margin:12px 0 5px}
+  .reg input{width:100%;font-size:20px;font-weight:700;padding:12px 14px;border:1.5px solid var(--line2);border-radius:10px;outline:none}
+  .reg input:focus{border-color:var(--blue)}
+  .btn{border:0;border-radius:11px;font-size:16px;font-weight:800;padding:14px;cursor:pointer;width:100%;margin-top:16px}
+  .btn-blue{background:var(--blue);color:#fff}
+  .btn-ghost{background:var(--surface-2,#f1f3f5);color:var(--ink2);border:1px solid var(--line)}
+  .recent{margin-top:16px}
+  .recent h3{font-size:13px;color:var(--muted);margin:0 0 8px;font-weight:700}
+  .recent .row{display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--line);font-size:14px}
+  .recent .row:last-child{border:0}
+  .recent .nm{color:var(--ink2)}
+  .recent .pr{font-weight:800;font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;color:var(--muted);font-size:12px;font-weight:700;padding:10px 12px;border-bottom:1px solid var(--line)}
+  td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+  .mini{font-size:13px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;color:var(--ink2)}
+  .mini.del{color:var(--red);border-color:var(--red-soft)}
+  .search{width:100%;font-size:15px;padding:11px 14px;border:1.5px solid var(--line2);border-radius:10px;outline:none;margin-bottom:12px}
+  .search:focus{border-color:var(--blue)}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .toolbar button{flex:1;min-width:130px}
+  .stat{display:flex;gap:12px;margin-bottom:14px}
+  .stat .s{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .stat .s .k{font-size:12px;color:var(--muted)}
+  .stat .s .v{font-size:24px;font-weight:800;margin-top:4px}
+  .hide{display:none}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#191f28;color:#fff;padding:12px 20px;border-radius:12px;font-weight:700;font-size:15px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">매점<b>·</b>바코드</div>
+    <div class="tabs">
+      <button data-tab="scan" class="on">계산·조회</button>
+      <button data-tab="manage">상품관리</button>
+      <button data-tab="backup">백업</button>
+    </div>
+  </header>
+
+  <!-- ═══ 스캔 탭 ═══ -->
+  <section id="tab-scan">
+    <div class="card pad">
+      <form id="scanForm" autocomplete="off">
+        <input id="scan" class="scan-in" placeholder="바코드를 스캔하세요" inputmode="numeric" />
+      </form>
+      <div class="hint">스캐너로 찍거나 숫자 입력 후 Enter · 커서는 자동으로 여기 유지됩니다</div>
+
+      <div class="display" id="display">
+        <div class="idle">🔍 스캔 대기 중</div>
+      </div>
+    </div>
+
+    <div class="card pad recent">
+      <h3>최근 스캔</h3>
+      <div id="recent"><div class="idle" style="font-size:14px;padding:6px 0">아직 없음</div></div>
+    </div>
+  </section>
+
+  <!-- ═══ 상품관리 탭 ═══ -->
+  <section id="tab-manage" class="hide">
+    <div class="stat">
+      <div class="s"><div class="k">등록 상품</div><div class="v" id="countProd">0</div></div>
+    </div>
+    <div class="card pad">
+      <input id="mSearch" class="search" placeholder="상품명·바코드 검색" />
+      <button class="btn btn-blue" id="addManual" style="margin:0 0 14px">+ 상품 직접 추가</button>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>바코드</th><th>상품명</th><th style="text-align:right">가격</th><th style="width:120px"></th></tr></thead>
+          <tbody id="prodRows"></tbody>
+        </table>
+      </div>
+      <div id="mEmpty" class="idle" style="text-align:center;padding:28px 0;font-size:14px">등록된 상품이 없습니다</div>
+    </div>
+  </section>
+
+  <!-- ═══ 백업 탭 ═══ -->
+  <section id="tab-backup" class="hide">
+    <div class="card pad">
+      <p style="margin:0 0 4px;font-weight:800;font-size:16px">데이터 백업 / 복원</p>
+      <p style="margin:0 0 16px;color:var(--ink2);font-size:14px;line-height:1.6">
+        상품 데이터는 이 브라우저에 저장됩니다. <b>노트북을 바꾸거나 초기화하면 사라지니</b>,
+        가끔 <b>백업 파일 저장</b>을 눌러 파일로 보관하세요. 새 기기에선 <b>백업 불러오기</b>로 복원합니다.
+      </p>
+      <div class="toolbar">
+        <button class="btn btn-blue" id="expJson">💾 백업 파일 저장 (JSON)</button>
+        <button class="btn btn-ghost" id="expCsv">엑셀용 CSV 저장</button>
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-ghost" id="impBtn">📂 백업 불러오기</button>
+        <input type="file" id="impFile" accept=".json" class="hide" />
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin-top:14px">현재 등록 상품: <b id="countProd2">0</b>개</p>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const KEY = "barcode_pos_products_v1";
+const $ = (s)=>document.querySelector(s);
+
+/* ---------- 저장소 ---------- */
+function load(){ try{ return JSON.parse(localStorage.getItem(KEY)) || {}; }catch{ return {}; } }
+function save(p){ localStorage.setItem(KEY, JSON.stringify(p)); }
+let products = load();
+const won = (n)=> Number(n).toLocaleString("ko-KR") + "원";
+
+/* ---------- 소리 (계산대 느낌) ---------- */
+let actx=null;
+function beep(ok){
+  try{
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.connect(g); g.connect(actx.destination);
+    o.frequency.value = ok?880:220; o.type="square";
+    g.gain.setValueAtTime(.06, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.0001, actx.currentTime+(ok?.12:.28));
+    o.start(); o.stop(actx.currentTime+(ok?.12:.3));
+  }catch{}
+}
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on"); setTimeout(()=>t.classList.remove("on"),1600); }
+
+/* ---------- 탭 ---------- */
+document.querySelectorAll(".tabs button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    ["scan","manage","backup"].forEach(t=> $("#tab-"+t).classList.toggle("hide", t!==b.dataset.tab));
+    if(b.dataset.tab==="manage") renderProds();
+    if(b.dataset.tab==="scan") focusScan();
+    if(b.dataset.tab==="backup") refreshCounts();
+  };
+});
+
+/* ---------- 스캔 ---------- */
+const recent=[];
+function focusScan(){ const el=$("#scan"); if(el) setTimeout(()=>el.focus(),30); }
+// 스캔 화면 아무 데나 클릭해도 입력창 포커스 유지 (스캐너 대비)
+$("#tab-scan").addEventListener("click",(e)=>{ if(!e.target.closest("input,button")) focusScan(); });
+
+$("#scanForm").addEventListener("submit",(e)=>{
+  e.preventDefault();
+  const code = $("#scan").value.trim();
+  $("#scan").value="";
+  if(!code){ focusScan(); return; }
+  lookup(code);
+});
+
+function lookup(code){
+  const p = products[code];
+  if(p){
+    beep(true);
+    $("#display").innerHTML =
+      `<div>
+        <span class="badge" style="background:var(--green-soft);color:var(--green)">✓ 등록 상품</span>
+        <div class="prod-name">${esc(p.name)}</div>
+        <div class="prod-price">${won(p.price)}</div>
+        <div class="prod-code">${esc(code)}</div>
+      </div>`;
+    recent.unshift({name:p.name, price:p.price});
+    renderRecent();
+    focusScan();
+  } else {
+    beep(false);
+    showRegister(code);
+  }
+}
+
+function showRegister(code){
+  $("#display").innerHTML =
+    `<div class="reg">
+       <span class="badge" style="background:var(--amber);color:#fff">신규 — 즉석 등록</span>
+       <div class="prod-code" style="margin:0 0 4px">바코드 ${esc(code)}</div>
+       <label>상품명</label>
+       <input id="rName" placeholder="예: 삼각김밥 참치마요" />
+       <label>가격 (원)</label>
+       <input id="rPrice" type="number" inputmode="numeric" placeholder="1500" />
+       <button class="btn btn-blue" id="rSave">등록하고 조회</button>
+     </div>`;
+  const nm=$("#rName"); setTimeout(()=>nm.focus(),30);
+  const doSave=()=>{
+    const name=$("#rName").value.trim();
+    const price=parseInt(($("#rPrice").value||"").replace(/[^\d]/g,""),10);
+    if(!name){ toast("상품명을 입력하세요"); $("#rName").focus(); return; }
+    if(!Number.isFinite(price)){ toast("가격을 입력하세요"); $("#rPrice").focus(); return; }
+    products[code]={name,price,updated:Date.now()};
+    save(products);
+    toast("등록됨 · "+name);
+    lookup(code);
+  };
+  $("#rSave").onclick=doSave;
+  $("#rPrice").addEventListener("keydown",(e)=>{ if(e.key==="Enter"){ e.preventDefault(); doSave(); }});
+}
+
+function renderRecent(){
+  const box=$("#recent");
+  if(recent.length===0){ box.innerHTML='<div class="idle" style="font-size:14px;padding:6px 0">아직 없음</div>'; return; }
+  box.innerHTML = recent.slice(0,12).map(r=>
+    `<div class="row"><span class="nm">${esc(r.name)}</span><span class="pr">${won(r.price)}</span></div>`).join("");
+}
+
+/* ---------- 상품관리 ---------- */
+$("#mSearch").addEventListener("input", renderProds);
+$("#addManual").onclick=()=>{
+  const code=prompt("바코드 (스캐너로 찍거나 숫자 입력)"); if(!code) return;
+  const name=prompt("상품명"); if(!name) return;
+  const price=parseInt((prompt("가격(원)")||"").replace(/[^\d]/g,""),10);
+  if(!Number.isFinite(price)){ toast("가격이 올바르지 않음"); return; }
+  products[code.trim()]={name:name.trim(),price,updated:Date.now()};
+  save(products); renderProds(); toast("추가됨");
+};
+
+function renderProds(){
+  const q=($("#mSearch").value||"").trim().toLowerCase();
+  const entries=Object.entries(products)
+    .filter(([code,p])=> !q || code.includes(q) || p.name.toLowerCase().includes(q))
+    .sort((a,b)=> (b[1].updated||0)-(a[1].updated||0));
+  $("#prodRows").innerHTML = entries.map(([code,p])=>
+    `<tr>
+       <td style="color:var(--muted);font-variant-numeric:tabular-nums">${esc(code)}</td>
+       <td>${esc(p.name)}</td>
+       <td class="num">${won(p.price)}</td>
+       <td>
+         <button class="mini" data-edit="${esc(code)}">수정</button>
+         <button class="mini del" data-del="${esc(code)}">삭제</button>
+       </td>
+     </tr>`).join("");
+  $("#mEmpty").classList.toggle("hide", entries.length>0);
+  refreshCounts();
+  $("#prodRows").querySelectorAll("[data-del]").forEach(b=> b.onclick=()=>{
+    if(confirm("삭제할까요?\n"+products[b.dataset.del]?.name)){ delete products[b.dataset.del]; save(products); renderProds(); }
+  });
+  $("#prodRows").querySelectorAll("[data-edit]").forEach(b=> b.onclick=()=>{
+    const code=b.dataset.edit, p=products[code];
+    const name=prompt("상품명", p.name); if(name===null) return;
+    const price=parseInt((prompt("가격(원)", p.price)||"").replace(/[^\d]/g,""),10);
+    if(!Number.isFinite(price)){ toast("가격 오류"); return; }
+    products[code]={name:name.trim(),price,updated:Date.now()}; save(products); renderProds(); toast("수정됨");
+  });
+}
+function refreshCounts(){ const n=Object.keys(products).length; $("#countProd").textContent=n; $("#countProd2").textContent=n; }
+
+/* ---------- 백업 ---------- */
+function download(name, text, type){
+  const blob=new Blob([text],{type}); const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function ymd(){ const d=new Date(); return d.getFullYear()+""+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0"); }
+$("#expJson").onclick=()=> download(`매점바코드_백업_${ymd()}.json`, JSON.stringify(products,null,2), "application/json");
+$("#expCsv").onclick=()=>{
+  const rows=[["바코드","상품명","가격"]].concat(Object.entries(products).map(([c,p])=>[c,p.name,p.price]));
+  const csv="﻿"+rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  download(`매점바코드_${ymd()}.csv`, csv, "text/csv");
+};
+$("#impBtn").onclick=()=> $("#impFile").click();
+$("#impFile").addEventListener("change",(e)=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const data=JSON.parse(r.result);
+      if(typeof data!=="object") throw 0;
+      const merged=Object.assign({}, products, data);
+      products=merged; save(products); renderProds();
+      toast(Object.keys(data).length+"개 불러옴(병합)");
+    }catch{ toast("파일이 올바르지 않습니다"); }
+    e.target.value="";
+  };
+  r.readAsText(f);
+});
+
+function esc(s){ return String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
+
+/* ---------- 시작 ---------- */
+refreshCounts();
+focusScan();
+window.addEventListener("focus", focusScan);
+</script>
+</body>
+</html>
