@@ -3,27 +3,28 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <title>매점 POS</title>
 <link rel="manifest" href='data:application/json,{"name":"매점 POS","short_name":"매점POS","start_url":".","display":"standalone","background_color":"%23f3f5f7","theme_color":"%233182f6","icons":[]}' />
 <style>
   :root{
-    --bg:#eef1f4; --panel:#fff; --ink:#191f28; --ink2:#4e5968; --muted:#8b95a1;
-    --line:#e9ecef; --line2:#dde1e6; --blue:#3182f6; --blue-soft:#e8f3ff;
+    --bg:#f2f4f6; --panel:#fff; --ink:#12141a; --ink2:#4e5968; --muted:#98a2b3;
+    --line:#edeff2; --line2:#e2e5ea; --blue:#3182f6; --blue-soft:#eaf2ff;
     --green:#12b886; --green-soft:#e6f9f1; --red:#e5484d; --red-soft:#ffeaea;
     --amber:#f59f00; --amber-soft:#fff4e0;
-    --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.05),0 3px 10px rgba(16,24,40,.06);
+    --radius:16px; --shadow:0 1px 2px rgba(16,24,40,.04),0 6px 16px -6px rgba(16,24,40,.10);
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--ink);font-family:"Malgun Gothic",-apple-system,"Segoe UI",sans-serif;font-size:15px;-webkit-font-smoothing:antialiased;overflow:hidden}
   button,input{font-family:inherit}
   .app{display:flex;flex-direction:column;height:100vh}
-  header{display:flex;align-items:center;justify-content:space-between;padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px}
-  .logo{font-weight:800;font-size:18px;letter-spacing:-.02em}.logo b{color:var(--blue)}
-  .clock{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
-  .tabs{display:flex;gap:5px;background:var(--bg);padding:4px;border-radius:11px}
-  .tabs button{border:0;background:transparent;color:var(--muted);font-size:14px;font-weight:800;padding:8px 15px;border-radius:8px;cursor:pointer}
-  .tabs button.on{background:var(--blue);color:#fff}
+  header{display:flex;align-items:center;justify-content:space-between;padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px}
+  .logo{font-weight:800;font-size:19px;letter-spacing:-.03em}.logo b{color:var(--blue)}
+  .clock{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .tabs{display:flex;gap:4px;background:#eef1f5;padding:5px;border-radius:13px}
+  .tabs button{border:0;background:transparent;color:var(--ink2);font-size:15px;font-weight:800;padding:9px 20px;border-radius:9px;cursor:pointer;transition:.12s}
+  .tabs button.on{background:var(--panel);color:var(--blue);box-shadow:0 1px 3px rgba(16,24,40,.12)}
   main{flex:1;overflow:hidden;position:relative}
   .view{position:absolute;inset:0;overflow:auto;padding:16px;display:none}
   .view.on{display:block}
@@ -34,9 +35,10 @@
   .pos-left{flex:1.5;display:flex;flex-direction:column;gap:12px;min-width:0}
   .pos-right{flex:1;display:flex;flex-direction:column;gap:12px;max-width:420px}
   .scanrow{display:flex;gap:8px}
-  .scan-in{flex:1;font-size:24px;font-weight:800;padding:16px 18px;border:2px solid var(--line2);border-radius:12px;outline:none;min-width:0}
-  .scan-in:focus{border-color:var(--blue)}
-  .cambtn{border:2px solid var(--line2);background:#fff;border-radius:12px;padding:0 16px;font-size:22px;cursor:pointer}
+  .scan-in{flex:1;font-size:25px;font-weight:800;padding:19px 20px;border:2px solid var(--line2);border-radius:14px;outline:none;min-width:0;transition:.12s;letter-spacing:-.01em}
+  .scan-in::placeholder{color:#c0c6cf;font-weight:700}
+  .scan-in:focus{border-color:var(--blue);box-shadow:0 0 0 4px var(--blue-soft)}
+  .cambtn{border:2px solid var(--line2);background:#fff;border-radius:14px;padding:0 18px;font-size:22px;cursor:pointer;transition:.12s}
   .cambtn.on{border-color:var(--blue);background:var(--blue-soft)}
   #camWrap{display:none;position:relative;border-radius:12px;overflow:hidden;background:#000}
   #camWrap.on{display:block}
@@ -44,7 +46,7 @@
   .camhint{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.6);color:#fff;padding:4px 12px;border-radius:8px;font-size:12px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
   .cart{flex:1;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);min-height:180px}
-  .cart-empty{height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:16px;padding:30px}
+  .cart-empty{height:100%;display:flex;align-items:center;justify-content:center;color:#b4bcc7;font-size:17px;font-weight:600;padding:40px}
   .citem{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
   .citem:last-child{border:0}
   .citem .nm{flex:1;min-width:0}
@@ -55,13 +57,18 @@
   .qn{min-width:36px;text-align:center;font-weight:800;font-variant-numeric:tabular-nums}
   .sub{min-width:82px;text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
   .xbtn{width:28px;height:28px;border:0;background:transparent;color:var(--muted);font-size:19px;cursor:pointer}
-  .totbar{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px}
+  .totbar{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px}
   .totrow{display:flex;justify-content:space-between;align-items:baseline}
-  .totrow .k{font-size:14px;color:var(--muted)}
-  .totrow .v{font-size:40px;font-weight:900;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-  .paybtn{width:100%;margin-top:12px;padding:18px;border:0;border-radius:12px;background:var(--blue);color:#fff;font-size:20px;font-weight:900;cursor:pointer}
-  .paybtn:disabled{opacity:.4}
-  .clearbtn{width:100%;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--red);font-weight:700;cursor:pointer;font-size:13px}
+  .totrow.pcnt{padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+  .totrow .k{font-size:14px;color:var(--muted);font-weight:600}
+  .totrow .k b{color:var(--ink2)}
+  .totrow .kk{font-size:15px;color:var(--ink2);font-weight:700}
+  .totrow .v{font-size:52px;font-weight:900;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1}
+  .paybtn{width:100%;margin-top:18px;padding:20px;border:0;border-radius:14px;background:var(--blue);color:#fff;font-size:22px;font-weight:900;cursor:pointer;box-shadow:0 8px 18px -6px rgba(49,130,246,.6);transition:.12s}
+  .paybtn:hover{filter:brightness(1.05)}.paybtn:active{transform:scale(.985)}
+  .paybtn:disabled{opacity:.35;box-shadow:none;cursor:not-allowed}
+  .clearbtn{width:100%;margin-top:8px;padding:11px;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--muted);font-weight:700;cursor:pointer;font-size:13px}
+  .clearbtn:hover{color:var(--red);border-color:var(--red-soft)}
   .hint{font-size:12px;color:var(--muted);text-align:center;margin-top:2px}
 
   /* 모달 공통 */
@@ -146,9 +153,9 @@
       </div>
       <div class="pos-right">
         <div class="totbar">
-          <div class="totrow"><span class="k">품목 <b id="cnt">0</b></span></div>
-          <div class="totrow"><span class="k">합계</span><span class="v" id="total">0</span></div>
-          <button class="paybtn" id="payBtn" disabled>결제</button>
+          <div class="totrow pcnt"><span class="k">품목 <b id="cnt">0</b>개</span><span class="k">합계</span></div>
+          <div class="totrow"><span class="kk">받을 금액</span><span class="v" id="total">0</span></div>
+          <button class="paybtn" id="payBtn" disabled>결제하기</button>
           <button class="clearbtn" id="clearBtn">장바구니 비우기</button>
         </div>
       </div>
