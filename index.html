@@ -127,6 +127,13 @@
   #scannerMode.hide{display:none}
   #scannerMode .fin{background:#1a1f29;border-color:#2a3140;color:#fff}
   #scannerMode .fin::placeholder{color:#5b6472}
+  .cambox{position:relative;border-radius:14px;overflow:hidden;background:#000;flex:1;min-height:220px}
+  .scanguide{position:absolute;left:6%;right:6%;top:32%;height:30%;border:2px solid rgba(255,255,255,.85);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.30);pointer-events:none}
+  .camctl{display:flex;gap:10px;align-items:center;background:#161b23;padding:10px 12px;border-radius:12px}
+  .camctl button{border:1px solid #2a3140;background:#1a1f29;color:#e6e9ee;border-radius:9px;padding:9px 13px;font-size:17px;cursor:pointer}
+  .camctl button.on{background:#f59f00;border-color:#f59f00;color:#111}
+  .camctl input[type=range]{flex:1;accent-color:var(--blue)}
+  .camctl .zl{color:#8b95a1;font-size:12px;min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
   .flash{animation:fl .5s}@keyframes fl{0%{background:var(--green-soft)}100%{background:transparent}}
   @media(max-width:720px){#v-pos{flex-direction:column}.pos-right{max-width:none}}
 </style>
@@ -261,8 +268,14 @@
     <input id="scManual" class="fin" inputmode="numeric" placeholder="바코드 직접 입력 (카메라 안 될 때)" style="flex:1;font-size:16px" />
     <button class="btn btn-ghost" id="scSend" style="padding:13px 20px">전송</button>
   </div>
-  <div style="border-radius:14px;overflow:hidden;background:#000;flex:1;min-height:200px">
+  <div class="cambox">
     <video id="scCam" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+    <div class="scanguide"></div>
+  </div>
+  <div class="camctl hide" id="camCtl">
+    <button id="scTorch" title="플래시">🔦</button>
+    <input type="range" id="scZoom" min="1" max="6" step="0.1" value="1" />
+    <span class="zl" id="scZoomLbl">1.0x</span>
   </div>
   <div id="scLog" style="color:#9aa4b2;font-size:14px;text-align:center">바코드를 비추면 노트북 장바구니에 담깁니다</div>
 </div>
@@ -367,20 +380,60 @@ document.addEventListener("keydown",e=>{if(anyModalOpen())return;if(e.code==="Sp
 let lastCode="",lastAt=0;
 function dedup(c){const now=Date.now();if(c===lastCode&&now-lastAt<1500)return false;lastCode=c;lastAt=now;return true;}
 function loadScriptOnce(src){return new Promise((res,rej)=>{if(document.querySelector(`script[src="${src}"]`))return res();const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+const WANT=["ean_13","ean_8","upc_a","upc_e","code_128","code_39","codabar","itf"];
+async function openCamera(videoEl){
+  // 고해상도 요청 = 선명도(작은 바코드 인식률의 핵심)
+  let stream;
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}}});
+  }catch{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
+  }
+  videoEl.srcObject=stream;videoEl.setAttribute("playsinline","");await videoEl.play();
+  const track=stream.getVideoTracks()[0];
+  try{ // 연속 자동초점
+    const caps=track.getCapabilities?track.getCapabilities():{};
+    if(caps.focusMode&&caps.focusMode.includes("continuous"))await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
+  }catch{}
+  return {stream,track};
+}
 async function createEngine(videoEl,onCode){
+  const {stream,track}=await openCamera(videoEl);
+  const stopCam=()=>{try{stream.getTracks().forEach(t=>t.stop());}catch{}videoEl.srcObject=null;};
+  // BarcodeDetector가 1D 포맷을 실제로 지원할 때만 사용 (아니면 ZXing)
+  let useNative=false;
   if("BarcodeDetector" in window){
-    const det=new window.BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","codabar","itf","qr_code"]});
-    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-    videoEl.srcObject=stream;await videoEl.play();
+    try{
+      const sup=await window.BarcodeDetector.getSupportedFormats();
+      useNative=WANT.some(f=>sup.includes(f));
+    }catch{useNative=false;}
+  }
+  if(useNative){
+    const sup=await window.BarcodeDetector.getSupportedFormats();
+    const det=new window.BarcodeDetector({formats:WANT.filter(f=>sup.includes(f))});
     let run=true,raf=0;
     const loop=()=>{if(!run)return;det.detect(videoEl).then(cs=>{if(cs&&cs[0]&&cs[0].rawValue&&dedup(cs[0].rawValue))onCode(cs[0].rawValue);}).catch(()=>{});raf=requestAnimationFrame(loop);};
     loop();
-    return {stop(){run=false;cancelAnimationFrame(raf);stream.getTracks().forEach(t=>t.stop());videoEl.srcObject=null;}};
+    return {engine:"native",track,stop(){run=false;cancelAnimationFrame(raf);stopCam();}};
   }
   await loadScriptOnce("https://unpkg.com/@zxing/library@0.21.3");
   const reader=new window.ZXing.BrowserMultiFormatReader();
-  await reader.decodeFromVideoDevice(null,videoEl,res=>{if(res){const c=res.getText();if(c&&dedup(c))onCode(c);}});
-  return {stop(){try{reader.reset();}catch{}}};
+  await reader.decodeFromStream(stream,videoEl,res=>{if(res){const c=res.getText();if(c&&dedup(c))onCode(c);}});
+  return {engine:"zxing",track,stop(){try{reader.reset();}catch{}stopCam();}};
+}
+/* 줌·플래시 컨트롤 */
+function bindCamControls(track){
+  const ctl=$("#camCtl"),zoom=$("#scZoom"),lbl=$("#scZoomLbl"),torch=$("#scTorch");
+  const caps=track&&track.getCapabilities?track.getCapabilities():{};
+  ctl.classList.remove("hide");
+  if(caps.zoom){
+    zoom.min=caps.zoom.min;zoom.max=Math.min(caps.zoom.max,8);zoom.step=caps.zoom.step||0.1;zoom.value=caps.zoom.min;
+    lbl.textContent=Number(zoom.value).toFixed(1)+"x";zoom.disabled=false;
+    zoom.oninput=async()=>{lbl.textContent=Number(zoom.value).toFixed(1)+"x";try{await track.applyConstraints({advanced:[{zoom:Number(zoom.value)}]});}catch{}};
+  }else{zoom.disabled=true;lbl.textContent="줌 X";}
+  if(caps.torch){
+    torch.disabled=false;torch.onclick=async()=>{const on=!torch.classList.contains("on");try{await track.applyConstraints({advanced:[{torch:on}]});torch.classList.toggle("on",on);}catch{toast("플래시 제어 불가");}};
+  }else{torch.disabled=true;torch.style.opacity=.4;}
 }
 
 /* POS 화면 카메라 (노트북 웹캠 등) */
@@ -415,7 +468,7 @@ function stopRelay(){if(relayES){relayES.close();relayES=null;}$("#relayToggle")
 /* ═════════ 폰 스캐너 모드 (전체화면) ═════════ */
 let scEngine=null,scSent=0;
 function openScanner(){stopCam();$("#scannerMode").classList.remove("hide");}
-function closeScanner(){if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#scannerMode").classList.add("hide");}
+function closeScanner(){if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#camCtl").classList.add("hide");$("#scTorch").classList.remove("on");$("#scannerMode").classList.add("hide");}
 $("#goScanner").onclick=e=>{e.preventDefault();openScanner();};
 $("#scExit").onclick=closeScanner;
 async function sendCode(bc){
@@ -434,8 +487,9 @@ $("#scStart").onclick=async()=>{
   localStorage.setItem("pos_scanner_code",code);
   try{
     scEngine=await createEngine($("#scCam"),bc=>sendCode(bc));
+    bindCamControls(scEngine.track);
     $("#scStart").classList.add("hide");$("#scStop").classList.remove("hide");
-    $("#scLog").textContent="스캔 대기 중… 바코드를 비추세요";
+    $("#scLog").textContent="흐리면 15~20cm 떨어뜨리고 줌을 올리세요 · 어두우면 🔦";
   }catch(err){
     const n=err&&err.name;
     if(n==="NotAllowedError")$("#scLog").textContent="카메라 권한이 막혔어요 — 화면 위에 떠 있는 다른 앱(플로팅 버튼)을 닫고 다시 시도하세요";
@@ -444,7 +498,7 @@ $("#scStart").onclick=async()=>{
     toast("카메라 실패 — 아래 '직접 입력'으로 먼저 테스트해보세요");
   }
 };
-$("#scStop").onclick=()=>{if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#scLog").textContent="중지됨";};
+$("#scStop").onclick=()=>{if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#camCtl").classList.add("hide");$("#scTorch").classList.remove("on");$("#scLog").textContent="중지됨";};
 if(new URLSearchParams(location.search).has("scanner"))openScanner();
 const savedSc=localStorage.getItem("pos_scanner_code");if(savedSc)$("#scCode").value=savedSc;
 
