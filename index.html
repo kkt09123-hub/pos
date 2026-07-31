@@ -82,6 +82,7 @@
   .lbl{font-size:12px;color:var(--muted);margin:12px 0 5px}
   .fin{width:100%;font-size:20px;font-weight:700;padding:12px 14px;border:1.5px solid var(--line2);border-radius:11px;outline:none}
   .fin:focus{border-color:var(--blue)}
+  .fin::placeholder{color:#c0c6cf;font-weight:500}
   .big-tot{font-size:44px;font-weight:900;text-align:center;margin:8px 0 4px;font-variant-numeric:tabular-nums}
   .seg{display:flex;gap:6px;margin:14px 0}
   .seg button{flex:1;padding:12px;border:1.5px solid var(--line2);background:#fff;border-radius:11px;font-weight:800;font-size:15px;cursor:pointer;color:var(--ink2)}
@@ -162,6 +163,7 @@
           <button class="cambtn" id="camBtn" title="폰/웹캠 카메라 스캔">📷</button>
         </div>
         <div id="camWrap"><video id="cam" playsinline muted></video><div class="camhint">바코드를 카메라에 비추세요</div></div>
+        <div id="scanLog" style="font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:16px"></div>
         <div class="cart" id="cart"><div class="cart-empty">🛒 상품을 스캔하세요</div></div>
         <div class="hint">스캐너로 찍기 · 미등록은 즉석 등록 · 결제 = <b>스페이스</b> · <a href="#" id="goScanner" style="color:var(--blue);font-weight:700">📱 이 기기를 폰 스캐너로</a></div>
       </div>
@@ -329,7 +331,7 @@
 <script>
 "use strict";
 /* ═════════ 버전 (배포마다 올림 — 화면 좌측상단 표시) ═════════ */
-const APP_VER="v1.1";
+const APP_VER="v1.2";
 /* ═════════ 데이터 계층 (P1에서 Supabase로 교체될 경계) ═════════ */
 const DB={KP:"pos_products_v1",KS:"pos_sales_v1",
   loadProducts(){try{return JSON.parse(localStorage.getItem(this.KP))||{}}catch{return{}}},
@@ -366,7 +368,29 @@ function focusScan(){const el=$("#scan");if(el&&$("#v-pos").classList.contains("
 $("#v-pos").addEventListener("click",e=>{if(!e.target.closest("input,button,video"))focusScan();});
 $("#scanForm").addEventListener("submit",e=>{e.preventDefault();const c=$("#scan").value.trim();$("#scan").value="";if(!c){focusScan();return;}addByBarcode(c);});
 
-function addByBarcode(code){const p=products[code];if(!p){beep(false);return openProdModal({barcode:code,mode:"register"});}beep(true);addToCart(code,p);}
+/* 바코드 정규화 + 조회 (UPC-A 12자리 ↔ EAN-13 13자리 선행0 동일 취급) */
+function normBarcode(s){return String(s||"").replace(/[^0-9A-Za-z]/g,"");}
+function lookupProduct(code){
+  if(products[code])return{code,p:products[code]};
+  if(code.length===12&&products["0"+code])return{code:"0"+code,p:products["0"+code]};
+  if(code.length===13&&code[0]==="0"&&products[code.slice(1)])return{code:code.slice(1),p:products[code.slice(1)]};
+  return null;
+}
+function logScan(code,found){
+  const el=$("#scanLog");if(!el)return;
+  const t=new Date().toLocaleTimeString("ko-KR",{hour12:false});
+  el.textContent=`최근 인식 ${t} · ${code} · ${found?found:"미등록"}`;
+}
+function addByBarcode(raw){
+  products=DB.loadProducts();           // 다른 탭·창에서 등록한 상품 즉시 반영(스테일 방지)
+  const code=normBarcode(raw);
+  if(!code)return;
+  const hit=lookupProduct(code);
+  logScan(code,hit&&hit.p.name);
+  if(!hit){beep(false);return openProdModal({barcode:code,mode:"register"});}
+  beep(true);addToCart(hit.code,hit.p);
+}
+window.addEventListener("storage",e=>{if(e.key===DB.KP)products=DB.loadProducts();if(e.key===DB.KS)sales=DB.loadSales();});
 function addToCart(barcode,p){const ex=cart.find(c=>c.barcode===barcode);if(ex)ex.qty++;else cart.push({barcode,name:p.name,price:p.price,qty:1});renderCart(barcode);focusScan();}
 function cartTotal(){return cart.reduce((s,c)=>s+c.price*c.qty,0);}
 function renderCart(flash){
