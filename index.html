@@ -21,6 +21,8 @@
   .app{display:flex;flex-direction:column;height:100vh}
   header{display:flex;align-items:center;justify-content:space-between;padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px}
   .logo{font-weight:800;font-size:19px;letter-spacing:-.03em}.logo b{color:var(--blue)}
+  .ver{display:inline-block;margin-left:6px;padding:2px 8px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font-size:12px;font-weight:800;letter-spacing:0;vertical-align:middle}
+  #scannerMode .ver{background:#243044;color:#8fb6f5}
   .clock{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
   .tabs{display:flex;gap:4px;background:#eef1f5;padding:5px;border-radius:13px}
   .tabs button{border:0;background:transparent;color:var(--ink2);font-size:15px;font-weight:800;padding:9px 20px;border-radius:9px;cursor:pointer;transition:.12s}
@@ -141,7 +143,7 @@
 <body>
 <div class="app">
   <header>
-    <div class="logo">매점<b>·</b>POS</div>
+    <div class="logo">매점<b>·</b>POS <span class="ver" id="verTag"></span></div>
     <div class="tabs">
       <button data-tab="pos" class="on">계산</button>
       <button data-tab="prod">상품</button>
@@ -258,7 +260,7 @@
 <!-- 폰 스캐너 모드 (전체화면) -->
 <div id="scannerMode" class="hide">
   <div style="display:flex;justify-content:space-between;align-items:center">
-    <b style="color:#fff;font-size:17px">📱 폰 스캐너</b>
+    <b style="color:#fff;font-size:17px">📱 폰 스캐너 <span class="ver" id="verTag2"></span></b>
     <button class="mini" id="scExit">닫기</button>
   </div>
   <input id="scCode" class="fin" placeholder="노트북 화면의 연결 코드 (예: A1B2C3)" autocapitalize="characters" style="text-transform:uppercase" />
@@ -326,6 +328,8 @@
 
 <script>
 "use strict";
+/* ═════════ 버전 (배포마다 올림 — 화면 좌측상단 표시) ═════════ */
+const APP_VER="v1.1";
 /* ═════════ 데이터 계층 (P1에서 Supabase로 교체될 경계) ═════════ */
 const DB={KP:"pos_products_v1",KS:"pos_sales_v1",
   loadProducts(){try{return JSON.parse(localStorage.getItem(this.KP))||{}}catch{return{}}},
@@ -610,6 +614,7 @@ $("#impBtn").onclick=()=>$("#impFile").click();
 $("#impFile").addEventListener("change",e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(d.products)products=Object.assign({},products,d.products);if(Array.isArray(d.sales)){const ids=new Set(sales.map(s=>s.id));d.sales.forEach(s=>{if(!ids.has(s.id))sales.push(s);});sales.sort((a,b)=>b.at-a.at);}DB.saveProducts(products);DB.saveSales(sales);renderBackup();toast("복원 완료(병합)");}catch{toast("파일 오류");}e.target.value="";};r.readAsText(f);});
 
 /* ═════════ 시작 ═════════ */
+$("#verTag").textContent=APP_VER;$("#verTag2").textContent=APP_VER;document.title="매점 POS "+APP_VER;
 renderCart();focusScan();window.addEventListener("focus",focusScan);
 </script>
 </body>
