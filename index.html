@@ -257,6 +257,10 @@
   <input id="scCode" class="fin" placeholder="노트북 화면의 연결 코드 (예: A1B2C3)" autocapitalize="characters" style="text-transform:uppercase" />
   <button class="btn btn-blue" id="scStart">카메라 시작</button>
   <button class="btn btn-ghost hide" id="scStop">중지</button>
+  <div style="display:flex;gap:8px">
+    <input id="scManual" class="fin" inputmode="numeric" placeholder="바코드 직접 입력 (카메라 안 될 때)" style="flex:1;font-size:16px" />
+    <button class="btn btn-ghost" id="scSend" style="padding:13px 20px">전송</button>
+  </div>
   <div style="border-radius:14px;overflow:hidden;background:#000;flex:1;min-height:200px">
     <video id="scCam" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
   </div>
@@ -414,18 +418,31 @@ function openScanner(){stopCam();$("#scannerMode").classList.remove("hide");}
 function closeScanner(){if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#scannerMode").classList.add("hide");}
 $("#goScanner").onclick=e=>{e.preventDefault();openScanner();};
 $("#scExit").onclick=closeScanner;
+async function sendCode(bc){
+  const code=$("#scCode").value.trim();
+  if(!code){toast("연결 코드를 먼저 입력하세요");return;}
+  if(!bc)return;
+  localStorage.setItem("pos_scanner_code",code);
+  try{await fetch(RELAY+topicOf(code),{method:"POST",body:bc});scSent++;$("#scLog").textContent="✅ 전송 "+scSent+"건 · 마지막: "+bc;beep(true);}
+  catch{$("#scLog").textContent="전송 실패 — 인터넷 확인";beep(false);}
+}
+$("#scSend").onclick=()=>{const v=$("#scManual").value.trim();if(!v){toast("바코드 숫자를 입력하세요");return;}sendCode(v);$("#scManual").value="";};
+$("#scManual").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("#scSend").click();}});
 $("#scStart").onclick=async()=>{
   const code=$("#scCode").value.trim();
   if(!code){toast("노트북 화면의 연결 코드를 입력하세요");return;}
   localStorage.setItem("pos_scanner_code",code);
   try{
-    scEngine=await createEngine($("#scCam"),async bc=>{
-      try{await fetch(RELAY+topicOf(code),{method:"POST",body:bc});scSent++;$("#scLog").textContent="전송 "+scSent+"건 · 마지막: "+bc;beep(true);}
-      catch{$("#scLog").textContent="전송 실패 — 인터넷 확인";beep(false);}
-    });
+    scEngine=await createEngine($("#scCam"),bc=>sendCode(bc));
     $("#scStart").classList.add("hide");$("#scStop").classList.remove("hide");
     $("#scLog").textContent="스캔 대기 중… 바코드를 비추세요";
-  }catch{toast("카메라를 열 수 없어요 — 배포된 https 주소에서 여세요");}
+  }catch(err){
+    const n=err&&err.name;
+    if(n==="NotAllowedError")$("#scLog").textContent="카메라 권한이 막혔어요 — 화면 위에 떠 있는 다른 앱(플로팅 버튼)을 닫고 다시 시도하세요";
+    else if(n==="NotFoundError")$("#scLog").textContent="카메라를 찾을 수 없어요";
+    else $("#scLog").textContent="카메라 실패("+(n||"오류")+") — 아래 직접 입력으로도 전송돼요";
+    toast("카메라 실패 — 아래 '직접 입력'으로 먼저 테스트해보세요");
+  }
 };
 $("#scStop").onclick=()=>{if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#scLog").textContent="중지됨";};
 if(new URLSearchParams(location.search).has("scanner"))openScanner();
