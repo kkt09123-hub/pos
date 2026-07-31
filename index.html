@@ -122,6 +122,11 @@
   .hide{display:none}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#191f28;color:#fff;padding:13px 22px;border-radius:12px;font-weight:800;font-size:15px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
   .toast.on{opacity:1}
+  /* 폰 스캐너 모드 (전체화면) */
+  #scannerMode{position:fixed;inset:0;background:#0e1117;z-index:50;display:flex;flex-direction:column;padding:18px;gap:12px}
+  #scannerMode.hide{display:none}
+  #scannerMode .fin{background:#1a1f29;border-color:#2a3140;color:#fff}
+  #scannerMode .fin::placeholder{color:#5b6472}
   .flash{animation:fl .5s}@keyframes fl{0%{background:var(--green-soft)}100%{background:transparent}}
   @media(max-width:720px){#v-pos{flex-direction:column}.pos-right{max-width:none}}
 </style>
@@ -149,7 +154,7 @@
         </div>
         <div id="camWrap"><video id="cam" playsinline muted></video><div class="camhint">바코드를 카메라에 비추세요</div></div>
         <div class="cart" id="cart"><div class="cart-empty">🛒 상품을 스캔하세요</div></div>
-        <div class="hint">스캐너로 찍기 · 미등록은 즉석 등록 · 결제 = <b>스페이스</b> 또는 결제 버튼</div>
+        <div class="hint">스캐너로 찍기 · 미등록은 즉석 등록 · 결제 = <b>스페이스</b> · <a href="#" id="goScanner" style="color:var(--blue);font-weight:700">📱 이 기기를 폰 스캐너로</a></div>
       </div>
       <div class="pos-right">
         <div class="totbar">
@@ -157,6 +162,16 @@
           <div class="totrow"><span class="kk">받을 금액</span><span class="v" id="total">0</span></div>
           <button class="paybtn" id="payBtn" disabled>결제하기</button>
           <button class="clearbtn" id="clearBtn">장바구니 비우기</button>
+        </div>
+        <div class="card pad">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <b style="font-size:14px">📱 폰 스캐너 연결</b>
+            <button class="mini" id="relayToggle">연결 대기</button>
+          </div>
+          <div style="margin-top:8px;font-size:13px;color:var(--muted)">연결 코드
+            <b id="pairCode" style="color:var(--ink);font-size:17px;letter-spacing:.08em;margin-left:4px">—</b>
+          </div>
+          <div id="relayState" style="margin-top:4px;font-size:12px;color:var(--muted)">꺼짐 — 켜면 폰에서 찍은 바코드가 여기 담깁니다</div>
         </div>
       </div>
     </section>
@@ -231,6 +246,21 @@
       </div>
     </section>
   </main>
+</div>
+
+<!-- 폰 스캐너 모드 (전체화면) -->
+<div id="scannerMode" class="hide">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <b style="color:#fff;font-size:17px">📱 폰 스캐너</b>
+    <button class="mini" id="scExit">닫기</button>
+  </div>
+  <input id="scCode" class="fin" placeholder="노트북 화면의 연결 코드 (예: A1B2C3)" autocapitalize="characters" style="text-transform:uppercase" />
+  <button class="btn btn-blue" id="scStart">카메라 시작</button>
+  <button class="btn btn-ghost hide" id="scStop">중지</button>
+  <div style="border-radius:14px;overflow:hidden;background:#000;flex:1;min-height:200px">
+    <video id="scCam" playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+  </div>
+  <div id="scLog" style="color:#9aa4b2;font-size:14px;text-align:center">바코드를 비추면 노트북 장바구니에 담깁니다</div>
 </div>
 
 <!-- 상품 입력 모달 (즉석등록·추가·수정 공용) -->
@@ -329,27 +359,77 @@ function renderCart(flash){
 $("#clearBtn").onclick=()=>{if(!cart.length)return;openConfirm("장바구니 비우기","담은 상품을 모두 지울까요?",()=>{cart=[];renderCart();focusScan();},"비우기");};
 document.addEventListener("keydown",e=>{if(anyModalOpen())return;if(e.code==="Space"&&$("#v-pos").classList.contains("on")&&document.activeElement===$("#scan")&&$("#scan").value===""){e.preventDefault();openPay();}});
 
-/* ═════════ 카메라 스캔 (실험용) ═════════ */
-let camStream=null,camRunning=false,detector=null,lastCode="",lastAt=0,rafId=0;
-$("#camBtn").onclick=()=>camRunning?stopCam():startCam();
-async function startCam(){
-  if(!("BarcodeDetector"in window)){toast("이 브라우저는 카메라 스캔을 지원 안 해요. 스캐너/수동 입력을 쓰세요.");return;}
+/* ═════════ 카메라 엔진 — BarcodeDetector(안드/PC크롬) → ZXing 폴백(아이폰) ═════════ */
+let lastCode="",lastAt=0;
+function dedup(c){const now=Date.now();if(c===lastCode&&now-lastAt<1500)return false;lastCode=c;lastAt=now;return true;}
+function loadScriptOnce(src){return new Promise((res,rej)=>{if(document.querySelector(`script[src="${src}"]`))return res();const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+async function createEngine(videoEl,onCode){
+  if("BarcodeDetector" in window){
+    const det=new window.BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","codabar","itf","qr_code"]});
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+    videoEl.srcObject=stream;await videoEl.play();
+    let run=true,raf=0;
+    const loop=()=>{if(!run)return;det.detect(videoEl).then(cs=>{if(cs&&cs[0]&&cs[0].rawValue&&dedup(cs[0].rawValue))onCode(cs[0].rawValue);}).catch(()=>{});raf=requestAnimationFrame(loop);};
+    loop();
+    return {stop(){run=false;cancelAnimationFrame(raf);stream.getTracks().forEach(t=>t.stop());videoEl.srcObject=null;}};
+  }
+  await loadScriptOnce("https://unpkg.com/@zxing/library@0.21.3");
+  const reader=new window.ZXing.BrowserMultiFormatReader();
+  await reader.decodeFromVideoDevice(null,videoEl,res=>{if(res){const c=res.getText();if(c&&dedup(c))onCode(c);}});
+  return {stop(){try{reader.reset();}catch{}}};
+}
+
+/* POS 화면 카메라 (노트북 웹캠 등) */
+let posEngine=null;
+$("#camBtn").onclick=()=>posEngine?stopCam():startPosCam();
+async function startPosCam(){
   try{
-    detector=new window.BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39","codabar","itf","qr_code"]});
-    camStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-    const v=$("#cam");v.srcObject=camStream;await v.play();
-    camRunning=true;$("#camWrap").classList.add("on");$("#camBtn").classList.add("on");
-    detectLoop();
-  }catch(err){toast("카메라를 열 수 없어요("+(err.name||"오류")+"). https 또는 localhost에서만 됩니다.");stopCam();}
+    $("#camWrap").classList.add("on");$("#camBtn").classList.add("on");
+    posEngine=await createEngine($("#cam"),code=>addByBarcode(code));
+  }catch(err){toast("카메라를 열 수 없어요 — https 또는 localhost에서만 됩니다");stopCam();}
 }
-function stopCam(){camRunning=false;cancelAnimationFrame(rafId);if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;}$("#camWrap").classList.remove("on");$("#camBtn").classList.remove("on");}
-function detectLoop(){
-  if(!camRunning)return;
-  detector.detect($("#cam")).then(codes=>{
-    if(codes&&codes[0]){const c=codes[0].rawValue;const now=Date.now();if(c&&(c!==lastCode||now-lastAt>1500)){lastCode=c;lastAt=now;addByBarcode(c);}}
-  }).catch(()=>{});
-  rafId=requestAnimationFrame(detectLoop);
+function stopCam(){if(posEngine){posEngine.stop();posEngine=null;}$("#camWrap").classList.remove("on");$("#camBtn").classList.remove("on");}
+
+/* ═════════ 폰 → 노트북 실시간 릴레이 (실험용, ntfy.sh 공개채널 경유) ═════════ */
+const RELAY="https://ntfy.sh/";
+function pairCode(){let c=localStorage.getItem("pos_pair_code");if(!c){c=Math.random().toString(36).slice(2,8).toUpperCase();localStorage.setItem("pos_pair_code",c);}return c;}
+const topicOf=c=>"maejeom-pos-"+String(c).trim().toLowerCase();
+let relayES=null;
+$("#pairCode").textContent=pairCode();
+$("#relayToggle").onclick=()=>relayES?stopRelay():startRelay();
+function startRelay(){
+  try{
+    relayES=new EventSource(RELAY+topicOf(pairCode())+"/sse");
+    relayES.onmessage=e=>{try{const d=JSON.parse(e.data);const code=String(d.message||"").trim();if(code)addByBarcode(code);}catch{}};
+    relayES.onerror=()=>{$("#relayState").textContent="연결 불안정 — 인터넷 확인";};
+    $("#relayToggle").textContent="연결 끊기";
+    $("#relayState").textContent="✅ 수신 중 — 폰에서 코드 "+pairCode()+" 입력 후 스캔";
+  }catch{toast("릴레이 연결 실패 — 인터넷 확인");}
 }
+function stopRelay(){if(relayES){relayES.close();relayES=null;}$("#relayToggle").textContent="연결 대기";$("#relayState").textContent="꺼짐 — 켜면 폰에서 찍은 바코드가 여기 담깁니다";}
+
+/* ═════════ 폰 스캐너 모드 (전체화면) ═════════ */
+let scEngine=null,scSent=0;
+function openScanner(){stopCam();$("#scannerMode").classList.remove("hide");}
+function closeScanner(){if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#scannerMode").classList.add("hide");}
+$("#goScanner").onclick=e=>{e.preventDefault();openScanner();};
+$("#scExit").onclick=closeScanner;
+$("#scStart").onclick=async()=>{
+  const code=$("#scCode").value.trim();
+  if(!code){toast("노트북 화면의 연결 코드를 입력하세요");return;}
+  localStorage.setItem("pos_scanner_code",code);
+  try{
+    scEngine=await createEngine($("#scCam"),async bc=>{
+      try{await fetch(RELAY+topicOf(code),{method:"POST",body:bc});scSent++;$("#scLog").textContent="전송 "+scSent+"건 · 마지막: "+bc;beep(true);}
+      catch{$("#scLog").textContent="전송 실패 — 인터넷 확인";beep(false);}
+    });
+    $("#scStart").classList.add("hide");$("#scStop").classList.remove("hide");
+    $("#scLog").textContent="스캔 대기 중… 바코드를 비추세요";
+  }catch{toast("카메라를 열 수 없어요 — 배포된 https 주소에서 여세요");}
+};
+$("#scStop").onclick=()=>{if(scEngine){scEngine.stop();scEngine=null;}$("#scStart").classList.remove("hide");$("#scStop").classList.add("hide");$("#scLog").textContent="중지됨";};
+if(new URLSearchParams(location.search).has("scanner"))openScanner();
+const savedSc=localStorage.getItem("pos_scanner_code");if(savedSc)$("#scCode").value=savedSc;
 
 /* ═════════ 상품 입력 모달 (즉석등록/추가/수정 공용) ═════════ */
 let pmCtx=null;
