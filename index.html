@@ -142,7 +142,11 @@
   #scannerMode .fin::placeholder{color:#5b6472}
   .cambox{position:relative;border-radius:14px;overflow:hidden;background:#000;flex:1;min-height:220px}
   .scanguide{position:absolute;left:4%;right:4%;top:27%;height:46%;border:2px solid rgba(255,255,255,.85);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.28);pointer-events:none}
-  .camctl{display:flex;gap:10px;align-items:center;background:#161b23;padding:10px 12px;border-radius:12px}
+  .camctl{display:flex;gap:8px;align-items:center;background:#161b23;padding:10px 12px;border-radius:12px;flex-wrap:wrap}
+  .camctl .row{display:flex;gap:8px;align-items:center;width:100%}
+  .camctl select{flex:1;background:#1a1f29;color:#e6e9ee;border:1px solid #2a3140;border-radius:9px;padding:9px;font-size:13px;min-width:0}
+  .camctl .tag{color:#7c8798;font-size:11px}
+  .caps{color:#7c8798;font-size:11px;width:100%;word-break:break-all}
   .camctl button{border:1px solid #2a3140;background:#1a1f29;color:#e6e9ee;border-radius:9px;padding:9px 13px;font-size:17px;cursor:pointer}
   .camctl button.on{background:#f59f00;border-color:#f59f00;color:#111}
   .camctl input[type=range]{flex:1;accent-color:var(--blue)}
@@ -287,11 +291,23 @@
     <div class="scanguide"></div>
   </div>
   <div class="camctl hide" id="camCtl">
-    <button id="scTorch" title="플래시">🔦</button>
-    <button id="scFocus" title="초점 재조정">🎯</button>
-    <input type="range" id="scZoom" min="1" max="6" step="0.1" value="1" />
-    <span class="zl" id="scZoomLbl">1.0x</span>
-    <span class="zl" id="camRes" style="min-width:74px">—</span>
+    <div class="row">
+      <select id="camPick"><option value="">카메라 자동</option></select>
+      <span class="zl" id="camRes" style="min-width:80px">—</span>
+    </div>
+    <div class="row">
+      <button id="scTorch" title="플래시">🔦</button>
+      <button id="scFocus" title="초점 재조정">🎯</button>
+      <span class="tag">줌</span>
+      <input type="range" id="scZoom" min="1" max="6" step="0.1" value="1" />
+      <span class="zl" id="scZoomLbl">1.0x</span>
+    </div>
+    <div class="row" id="focusRow">
+      <span class="tag">초점</span>
+      <input type="range" id="scFocusDist" min="0" max="1" step="0.01" value="0" />
+      <span class="zl" id="scFocusLbl">자동</span>
+    </div>
+    <div class="caps" id="camCaps"></div>
   </div>
   <div id="scLog" style="color:#9aa4b2;font-size:14px;text-align:center">바코드를 비추면 노트북 장바구니에 담깁니다</div>
 </div>
@@ -343,7 +359,7 @@
 <script>
 "use strict";
 /* ═════════ 버전 (배포마다 올림 — 화면 좌측상단 표시) ═════════ */
-const APP_VER="v1.3";
+const APP_VER="v1.4";
 /* ═════════ 데이터 계층 (P1에서 Supabase로 교체될 경계) ═════════ */
 const DB={KP:"pos_products_v1",KS:"pos_sales_v1",
   loadProducts(){try{return JSON.parse(localStorage.getItem(this.KP))||{}}catch{return{}}},
@@ -358,7 +374,19 @@ const won=n=>Number(n||0).toLocaleString("ko-KR")+"원";
 const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 const intOf=v=>parseInt(String(v||"").replace(/[^\d]/g,""),10);
 function toast(m){const t=$("#toast");t.textContent=m;t.classList.add("on");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("on"),1700);}
-let actx=null;function beep(ok){try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.connect(g);g.connect(actx.destination);o.type="square";o.frequency.value=ok?880:200;g.gain.setValueAtTime(.05,actx.currentTime);g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+(ok?.1:.3));o.start();o.stop(actx.currentTime+(ok?.1:.32));}catch{}}
+let actx=null;
+function beep(ok){
+  try{actx=actx||new(window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.connect(g);g.connect(actx.destination);o.type="square";o.frequency.value=ok?880:200;g.gain.setValueAtTime(.05,actx.currentTime);g.gain.exponentialRampToValueAtTime(.0001,actx.currentTime+(ok?.1:.3));o.start();o.stop(actx.currentTime+(ok?.1:.32));}catch{}
+  try{if(navigator.vibrate)navigator.vibrate(ok?70:[40,50,40]);}catch{}   // 폰 진동 피드백
+}
+/* 스캔 성공 시 화면 플래시 */
+function flashOK(){
+  const d=document.createElement("div");
+  d.style.cssText="position:fixed;inset:0;background:#12b886;opacity:.45;z-index:70;pointer-events:none;transition:opacity .35s";
+  document.body.appendChild(d);
+  requestAnimationFrame(()=>{d.style.opacity="0";});
+  setTimeout(()=>d.remove(),400);
+}
 
 /* ═════════ 탭 ═════════ */
 $$(".tabs button").forEach(b=>b.onclick=()=>{
@@ -439,11 +467,14 @@ function confirmRead(code){
   return pend.n>=CONFIRM_N;
 }
 
+let camDeviceId=localStorage.getItem("pos_cam_id")||"";
 async function openCamera(videoEl){
-  // 해상도 우선순위: 실제 적용값은 UI에 표시해 진단 가능하게
+  // 삼성 등 후면 카메라 다수 → 선택 가능. 해상도는 폴백 체인.
+  const base=camDeviceId?{deviceId:{exact:camDeviceId}}:{facingMode:{ideal:"environment"}};
   const tries=[
-    {facingMode:{ideal:"environment"},width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30}},
-    {facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}},
+    Object.assign({},base,{width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30}}),
+    Object.assign({},base,{width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}}),
+    base,
     {facingMode:{ideal:"environment"}}
   ];
   let stream=null,err=null;
@@ -494,14 +525,16 @@ async function createEngine(videoEl,onCode,onStatus){
   if(useNative){
     const sup=await window.BarcodeDetector.getSupportedFormats();
     const det=new window.BarcodeDetector({formats:WANT.filter(f=>sup.includes(f))});
-    let run=true,raf=0;
-    const loop=()=>{
+    let run=true,raf=0,busy=false,lastT=0;
+    const loop=ts=>{
       if(!run)return;
-      const src=roiFrom(videoEl)||videoEl;
-      det.detect(src).then(cs=>{if(cs&&cs[0]&&cs[0].rawValue)accept(cs[0].rawValue);}).catch(()=>{});
       raf=requestAnimationFrame(loop);
+      if(busy||(ts-lastT)<70)return;     // 스로틀 + 중복 검출 방지(프레임 밀림 = 체감 지연 원인)
+      lastT=ts;busy=true;
+      const src=roiFrom(videoEl)||videoEl;
+      det.detect(src).then(cs=>{if(cs&&cs[0]&&cs[0].rawValue)accept(cs[0].rawValue);}).catch(()=>{}).finally(()=>{busy=false;});
     };
-    loop();
+    raf=requestAnimationFrame(loop);
     return {engine:"native",track,stop(){run=false;cancelAnimationFrame(raf);stopCam();resetConfirm();}};
   }
   await loadScriptOnce("https://unpkg.com/@zxing/library@0.21.3");
@@ -533,6 +566,38 @@ function bindCamControls(track,videoEl){
   if(caps.torch){
     torch.disabled=false;torch.onclick=async()=>{const on=!torch.classList.contains("on");try{await track.applyConstraints({advanced:[{torch:on}]});torch.classList.toggle("on",on);}catch{toast("플래시 제어 불가");}};
   }else{torch.disabled=true;torch.style.opacity=.4;}
+  // 수동 초점 (focusMode 제약을 무시하는 기기 대응 — 직접 거리 조절)
+  const fd=$("#scFocusDist"),fdl=$("#scFocusLbl"),frow=$("#focusRow");
+  if(caps.focusDistance){
+    frow.style.display="flex";
+    fd.min=caps.focusDistance.min;fd.max=caps.focusDistance.max;fd.step=caps.focusDistance.step||((caps.focusDistance.max-caps.focusDistance.min)/100);
+    fd.disabled=false;
+    fd.oninput=async()=>{fdl.textContent=Number(fd.value).toFixed(2);try{await track.applyConstraints({advanced:[{focusMode:"manual",focusDistance:Number(fd.value)}]});}catch{}};
+  }else{frow.style.display="none";}
+  // 지원 기능 진단 표시
+  const capEl=$("#camCaps");
+  if(capEl){
+    const list=[];
+    list.push("초점모드:"+((caps.focusMode||[]).join("/")||"미지원"));
+    list.push("수동초점:"+(caps.focusDistance?"O":"X"));
+    list.push("줌:"+(caps.zoom?"O":"X"));list.push("플래시:"+(caps.torch?"O":"X"));
+    capEl.textContent=list.join(" · ");
+  }
+  // 카메라 선택 (후면 렌즈가 여러 개면 초점 좋은 렌즈로 교체)
+  populateCameras(track);
+}
+async function populateCameras(track){
+  const sel=$("#camPick");if(!sel)return;
+  try{
+    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+    const cur=track&&track.getSettings?track.getSettings().deviceId:"";
+    sel.innerHTML='<option value="">카메라 자동</option>'+devs.map((d,i)=>`<option value="${d.deviceId}">${esc(d.label||("카메라 "+(i+1)))}</option>`).join("");
+    sel.value=camDeviceId||cur||"";
+    sel.onchange=async()=>{
+      camDeviceId=sel.value;localStorage.setItem("pos_cam_id",camDeviceId);
+      if(scEngine){scEngine.stop();scEngine=null;$("#scStart").click();}   // 선택 렌즈로 재시작
+    };
+  }catch{}
 }
 
 /* POS 화면 카메라 (노트북 웹캠 등) */
@@ -578,7 +643,7 @@ async function sendCode(bc){
   if(!code){toast("연결 코드를 먼저 입력하세요");return;}
   if(!bc)return;
   localStorage.setItem("pos_scanner_code",code);
-  try{await fetch(RELAY+topicOf(code),{method:"POST",body:bc});scSent++;$("#scLog").textContent="✅ 전송 "+scSent+"건 · 마지막: "+bc;beep(true);}
+  try{await fetch(RELAY+topicOf(code),{method:"POST",body:bc});scSent++;$("#scLog").textContent="✅ 전송 "+scSent+"건 · 마지막: "+bc;beep(true);flashOK();}
   catch{$("#scLog").textContent="전송 실패 — 인터넷 확인";beep(false);}
 }
 $("#scSend").onclick=()=>{const v=$("#scManual").value.trim();if(!v){toast("바코드 숫자를 입력하세요");return;}sendCode(v);$("#scManual").value="";};
