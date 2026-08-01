@@ -172,6 +172,11 @@
     <!-- ═══ 계산(POS) ═══ -->
     <section id="v-pos" class="view on">
       <div class="pos-left">
+        <div class="modebar" id="modeBar">
+          <button data-m="sell" class="on">🛒 판매</button>
+          <button data-m="stockin">📦 입고</button>
+        </div>
+        <div class="stockin-banner">📦 <b>입고 모드</b> — 스캔한 수량만큼 <b>재고가 늘어납니다</b>. 판매하려면 "🛒 판매"로 돌아가세요.</div>
         <div class="scanrow">
           <form id="scanForm" autocomplete="off" style="flex:1;display:flex"><input id="scan" class="scan-in" placeholder="바코드를 스캔하세요" inputmode="numeric" /></form>
           <button class="cambtn" id="camBtn" title="폰/웹캠 카메라 스캔">📷</button>
@@ -211,7 +216,10 @@
           ② <b>직접 추가</b> — 아래 "+ 상품 추가" 버튼<br>
           ③ <b>엑셀로 한번에</b> — "엑셀 양식 받기" → 엑셀에서 <b>바코드·상품명·가격</b> 3칸 채워 저장 → "엑셀 불러오기"
         </div>
-        <div class="stat"><div class="s"><div class="k">등록 상품</div><div class="v" id="pCount">0</div></div></div>
+        <div class="stat">
+          <div class="s"><div class="k">등록 상품</div><div class="v" id="pCount">0</div></div>
+          <div class="s"><div class="k">재고 부족 (3개 이하)</div><div class="v" id="pLow" style="color:var(--red)">0</div></div>
+        </div>
         <div class="card pad">
           <input id="pSearch" class="search" placeholder="상품명·바코드 검색" />
           <div class="toolbar">
@@ -222,7 +230,7 @@
             <input type="file" id="pImportFile" accept=".xlsx,.xls,.csv" class="hide" />
           </div>
           <div style="overflow-x:auto">
-            <table><thead><tr><th>바코드</th><th>상품명</th><th style="text-align:right">가격</th><th style="width:110px"></th></tr></thead>
+            <table><thead><tr><th>바코드</th><th>상품명</th><th style="text-align:right">가격</th><th style="text-align:right">재고</th><th style="width:150px"></th></tr></thead>
               <tbody id="pRows"></tbody></table>
           </div>
           <div id="pEmpty" class="cart-empty" style="height:auto;padding:28px;font-size:14px">등록된 상품이 없습니다</div>
@@ -323,6 +331,8 @@
     <input id="pmName" class="fin" placeholder="예: 코카콜라 500ml" />
     <div class="lbl">가격 (원)</div>
     <input id="pmPrice" class="fin" inputmode="numeric" placeholder="1500" />
+    <div class="lbl" id="pmStockLbl">재고 (모르면 비워두기)</div>
+    <input id="pmStock" class="fin" inputmode="numeric" placeholder="0" />
     <div class="mbtns"><button class="m-cancel" id="pmCancel">취소</button><button class="m-ok blue" id="pmOk">저장</button></div>
   </div>
 </div>
@@ -359,7 +369,7 @@
 <script>
 "use strict";
 /* ═════════ 버전 (배포마다 올림 — 화면 좌측상단 표시) ═════════ */
-const APP_VER="v1.4";
+const APP_VER="v1.5";
 /* ═════════ 데이터 계층 (P1에서 Supabase로 교체될 경계) ═════════ */
 const DB={KP:"pos_products_v1",KS:"pos_sales_v1",
   loadProducts(){try{return JSON.parse(localStorage.getItem(this.KP))||{}}catch{return{}}},
@@ -436,12 +446,51 @@ function cartTotal(){return cart.reduce((s,c)=>s+c.price*c.qty,0);}
 function renderCart(flash){
   const box=$("#cart");
   box.innerHTML=cart.length?cart.map((c,i)=>`<div class="citem${c.barcode===flash?' flash':''}"><div class="nm"><b>${esc(c.name)}</b><span>${won(c.price)} · ${esc(c.barcode)}</span></div><div class="qtybox"><button class="qbtn" data-dec="${i}">−</button><span class="qn">${c.qty}</span><button class="qbtn" data-inc="${i}">+</button></div><div class="sub">${won(c.price*c.qty)}</div><button class="xbtn" data-rm="${i}">×</button></div>`).join(""):'<div class="cart-empty">🛒 상품을 스캔하세요</div>';
-  $("#total").textContent=won(cartTotal());$("#cnt").textContent=cart.reduce((s,c)=>s+c.qty,0);$("#payBtn").disabled=cart.length===0;
+  const qty=cart.reduce((s,c)=>s+c.qty,0);
+  const stockin=posMode==="stockin";
+  $("#total").textContent=stockin?(qty+"개"):won(cartTotal());
+  const kk=document.querySelector(".totrow .kk");if(kk)kk.textContent=stockin?"입고 수량":"받을 금액";
+  $("#payBtn").textContent=stockin?"입고 완료":"결제하기";
+  $("#cnt").textContent=qty;$("#payBtn").disabled=cart.length===0;
   box.querySelectorAll("[data-inc]").forEach(b=>b.onclick=()=>{cart[b.dataset.inc].qty++;renderCart();focusScan();});
   box.querySelectorAll("[data-dec]").forEach(b=>b.onclick=()=>{const c=cart[b.dataset.dec];c.qty--;if(c.qty<=0)cart.splice(b.dataset.dec,1);renderCart();focusScan();});
   box.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{cart.splice(b.dataset.rm,1);renderCart();focusScan();});
 }
 $("#clearBtn").onclick=()=>{if(!cart.length)return;openConfirm("장바구니 비우기","담은 상품을 모두 지울까요?",()=>{cart=[];renderCart();focusScan();},"비우기");};
+
+/* ═════════ 모드: 🛒판매 / 📦입고 (같은 스캔 UI 재사용) ═════════ */
+let posMode="sell";
+$$("#modeBar button").forEach(b=>b.onclick=()=>{
+  if(cart.length){toast("담긴 항목을 완료하거나 비운 뒤 전환하세요");return;}
+  posMode=b.dataset.m;
+  $$("#modeBar button").forEach(x=>x.classList.toggle("on",x===b));
+  document.body.classList.toggle("stockin",posMode==="stockin");
+  renderCart();focusScan();
+});
+/* 재고 변동 이력 (왜 안 맞는지 추적용) */
+const KLOG="pos_stocklog_v1";
+function logStock(entries){
+  try{const log=JSON.parse(localStorage.getItem(KLOG)||"[]");
+    entries.forEach(e=>log.unshift(Object.assign({at:Date.now()},e)));
+    localStorage.setItem(KLOG,JSON.stringify(log.slice(0,3000)));}catch{}
+}
+function addStock(barcode,delta,reason){
+  products=DB.loadProducts();
+  const p=products[barcode];if(!p)return;
+  p.stock=(Number(p.stock)||0)+delta;p.updated=Date.now();
+  DB.saveProducts(products);
+  logStock([{barcode,delta,reason,after:p.stock}]);
+}
+function finishStockIn(){
+  if(!cart.length)return;
+  products=DB.loadProducts();
+  const rows=[];
+  cart.forEach(c=>{const p=products[c.barcode];if(p){p.stock=(Number(p.stock)||0)+c.qty;p.updated=Date.now();rows.push({barcode:c.barcode,delta:c.qty,reason:"입고",after:p.stock});}});
+  DB.saveProducts(products);logStock(rows);
+  const n=cart.reduce((s,c)=>s+c.qty,0);
+  cart=[];renderCart();
+  toast(`📦 입고 완료 · ${n}개`);
+}
 document.addEventListener("keydown",e=>{if(anyModalOpen())return;if(e.code==="Space"&&$("#v-pos").classList.contains("on")&&document.activeElement===$("#scan")&&$("#scan").value===""){e.preventDefault();openPay();}});
 
 /* ═════════ 카메라 엔진 — BarcodeDetector(안드/PC크롬) → ZXing 폴백(아이폰) ═════════ */
@@ -468,18 +517,47 @@ function confirmRead(code){
 }
 
 let camDeviceId=localStorage.getItem("pos_cam_id")||"";
+/**
+ * 후면 메인 렌즈 자동 선택.
+ * 안드로이드 라벨은 "camera2 0, facing back" 형태 — 번호가 가장 낮은 후면이 메인(광각·AF 있음).
+ * 초광각(대개 번호 큼)은 고정초점이라 근거리 바코드가 항상 흐림 → 기본값으로 잡히면 안 됨.
+ */
+async function pickBestBackCamera(){
+  try{
+    const devs=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+    if(!devs.length||!devs.some(d=>d.label))return "";          // 권한 전이면 라벨이 비어 판별 불가
+    const back=devs.filter(d=>/back|rear|environment|후면/i.test(d.label));
+    if(!back.length)return "";
+    const idx=d=>{const m=d.label.match(/(\d+)/);return m?parseInt(m[1],10):999;};
+    back.sort((a,b)=>idx(a)-idx(b));
+    return back[0].deviceId;
+  }catch{return "";}
+}
 async function openCamera(videoEl){
   // 삼성 등 후면 카메라 다수 → 선택 가능. 해상도는 폴백 체인.
-  const base=camDeviceId?{deviceId:{exact:camDeviceId}}:{facingMode:{ideal:"environment"}};
-  const tries=[
-    Object.assign({},base,{width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30}}),
-    Object.assign({},base,{width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}}),
-    base,
-    {facingMode:{ideal:"environment"}}
-  ];
-  let stream=null,err=null;
-  for(const v of tries){try{stream=await navigator.mediaDevices.getUserMedia({video:v});break;}catch(e){err=e;}}
-  if(!stream)throw err;
+  const open=async devId=>{
+    const base=devId?{deviceId:{exact:devId}}:{facingMode:{ideal:"environment"}};
+    const tries=[
+      Object.assign({},base,{width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30}}),
+      Object.assign({},base,{width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}}),
+      base,
+      {facingMode:{ideal:"environment"}}
+    ];
+    let s=null,e=null;
+    for(const v of tries){try{s=await navigator.mediaDevices.getUserMedia({video:v});break;}catch(x){e=x;}}
+    if(!s)throw e;
+    return s;
+  };
+  let stream=await open(camDeviceId);
+  // 사용자가 고른 적 없으면: 권한 획득 후 라벨 보고 '메인 후면 렌즈'로 자동 교체(초광각=고정초점 회피)
+  if(!camDeviceId){
+    const best=await pickBestBackCamera();
+    const cur=stream.getVideoTracks()[0].getSettings().deviceId;
+    if(best&&best!==cur){
+      try{stream.getTracks().forEach(t=>t.stop());stream=await open(best);camDeviceId=best;}
+      catch{stream=await open("");}
+    }
+  }
   videoEl.srcObject=stream;videoEl.setAttribute("playsinline","");await videoEl.play();
   const track=stream.getVideoTracks()[0];
   await refocus(track);
@@ -680,6 +758,8 @@ function openProdModal(ctx){ // {mode:'register'|'add'|'edit', barcode, name, pr
   $("#pmCode").textContent=ctx.mode==="register"?("스캔된 바코드: "+ctx.barcode):"";
   $("#pmBarcode").value=ctx.barcode||"";$("#pmBarcode").readOnly=ctx.mode!=="add";
   $("#pmName").value=ctx.name||"";$("#pmPrice").value=ctx.price!=null?ctx.price:"";
+  $("#pmStock").value=ctx.stock!=null?ctx.stock:"";
+  $("#pmStockLbl").textContent=ctx.mode==="edit"?"재고 (실사 보정 — 실제 수량 입력)":"재고 (모르면 비워두기)";
   $("#prodModal").classList.add("on");
   setTimeout(()=>$(ctx.mode==="add"?"#pmBarcode":"#pmName").focus(),40);
 }
@@ -695,7 +775,11 @@ function saveProdModal(){
   if(!name){toast("상품명을 입력하세요");$("#pmName").focus();return;}
   if(!Number.isFinite(price)){toast("가격을 입력하세요");$("#pmPrice").focus();return;}
   if(pmCtx.mode==="edit"&&pmCtx.origCode&&pmCtx.origCode!==code)delete products[pmCtx.origCode];
-  products[code]={name,price,updated:Date.now()};DB.saveProducts(products);
+  const before=Number(products[code]&&products[code].stock)||0;
+  const typed=intOf($("#pmStock").value);
+  const stock=Number.isFinite(typed)?typed:before;      // 비워두면 기존 재고 유지
+  products[code]={name,price,stock,updated:Date.now()};DB.saveProducts(products);
+  if(stock!==before)logStock([{barcode:code,delta:stock-before,reason:pmCtx.mode==="edit"?"실사":"초기등록",after:stock}]);
   const mode=pmCtx.mode;$("#prodModal").classList.remove("on");
   if(mode==="register"){toast("등록됨 · "+name);addToCart(code,products[code]);}
   else{toast(mode==="edit"?"수정됨":"추가됨");renderProds();}
@@ -710,7 +794,7 @@ $("#confirmModal").addEventListener("click",e=>{if(e.target===$("#confirmModal")
 
 /* ═════════ 결제 모달 ═════════ */
 let tender="현금";
-$("#payBtn").onclick=openPay;
+$("#payBtn").onclick=()=>{posMode==="stockin"?finishStockIn():openPay();};
 function openPay(){if(!cart.length)return;tender="현금";$$("#tender button").forEach(b=>b.classList.toggle("on",b.dataset.t==="현금"));$("#cashArea").classList.remove("hide");$("#mTotal").textContent=won(cartTotal());$("#received").value="";$("#change").textContent="0원";$("#change").classList.remove("neg");renderQuick();$("#payModal").classList.add("on");setTimeout(()=>$("#received").focus(),40);}
 function closePay(){$("#payModal").classList.remove("on");focusScan();}
 $("#mCancel").onclick=closePay;
@@ -721,18 +805,29 @@ $("#received").addEventListener("input",updateChange);
 $("#received").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();finishSale();}});
 function updateChange(){const rc=intOf($("#received").value)||0;const ch=rc-cartTotal();const el=$("#change");el.textContent=won(ch);el.classList.toggle("neg",ch<0);}
 $("#mOk").onclick=finishSale;
-function finishSale(){const tot=cartTotal();let received=tot,change=0;if(tender==="현금"){received=intOf($("#received").value)||0;if(received<tot){toast("받은 금액이 부족합니다");$("#received").focus();return;}change=received-tot;}else if(tender==="외상"){received=0;change=0;}const sale={id:"S"+Date.now(),at:Date.now(),items:cart.map(c=>({...c})),total:tot,tender,received,change};sales.unshift(sale);DB.saveSales(sales);closePay();cart=[];renderCart();toast(tender==="현금"&&change>0?`완료 · 거스름돈 ${won(change)}`:`완료 · ${tender} ${won(tot)}`);}
+function finishSale(){const tot=cartTotal();let received=tot,change=0;if(tender==="현금"){received=intOf($("#received").value)||0;if(received<tot){toast("받은 금액이 부족합니다");$("#received").focus();return;}change=received-tot;}else if(tender==="외상"){received=0;change=0;}const sale={id:"S"+Date.now(),at:Date.now(),items:cart.map(c=>({...c})),total:tot,tender,received,change};sales.unshift(sale);DB.saveSales(sales);
+  // 판매 = 재고 자동 차감 (추가 노동 0)
+  products=DB.loadProducts();const slog=[];
+  sale.items.forEach(it=>{const p=products[it.barcode];if(p){p.stock=(Number(p.stock)||0)-it.qty;p.updated=Date.now();slog.push({barcode:it.barcode,delta:-it.qty,reason:"판매",after:p.stock});}});
+  DB.saveProducts(products);logStock(slog);
+  closePay();cart=[];renderCart();toast(tender==="현금"&&change>0?`완료 · 거스름돈 ${won(change)}`:`완료 · ${tender} ${won(tot)}`);}
 
 /* ═════════ 상품 관리 ═════════ */
 $("#pSearch").addEventListener("input",renderProds);
 $("#pAdd").onclick=()=>openProdModal({mode:"add"});
 function renderProds(){
+  products=DB.loadProducts();
   const q=($("#pSearch").value||"").trim().toLowerCase();
   const es=Object.entries(products).filter(([c,p])=>!q||c.includes(q)||p.name.toLowerCase().includes(q)).sort((a,b)=>(b[1].updated||0)-(a[1].updated||0));
-  $("#pRows").innerHTML=es.map(([c,p])=>`<tr><td style="color:var(--muted);font-variant-numeric:tabular-nums">${esc(c)}</td><td>${esc(p.name)}</td><td class="num">${won(p.price)}</td><td><button class="mini" data-e="${esc(c)}">수정</button> <button class="mini del" data-d="${esc(c)}">삭제</button></td></tr>`).join("");
+  $("#pRows").innerHTML=es.map(([c,p])=>{
+    const st=Number(p.stock)||0,cls=st<=0?"zero":st<=3?"low":"";
+    return `<tr><td style="color:var(--muted);font-variant-numeric:tabular-nums">${esc(c)}</td><td>${esc(p.name)}</td><td class="num">${won(p.price)}</td><td class="num"><span class="stk ${cls}">${st}</span></td><td><button class="mini" data-e="${esc(c)}">수정·재고</button> <button class="mini del" data-d="${esc(c)}">삭제</button></td></tr>`;
+  }).join("");
   $("#pEmpty").classList.toggle("hide",es.length>0);$("#pCount").textContent=Object.keys(products).length;
+  const low=es.filter(([,p])=>(Number(p.stock)||0)<=3).length;
+  const le=$("#pLow");if(le)le.textContent=low;
   $("#pRows").querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>openConfirm("상품 삭제",products[b.dataset.d]?.name+" 를 삭제할까요?",()=>{delete products[b.dataset.d];DB.saveProducts(products);renderProds();}));
-  $("#pRows").querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>{const c=b.dataset.e,p=products[c];openProdModal({mode:"edit",barcode:c,origCode:c,name:p.name,price:p.price});});
+  $("#pRows").querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>{const c=b.dataset.e,p=products[c];openProdModal({mode:"edit",barcode:c,origCode:c,name:p.name,price:p.price,stock:Number(p.stock)||0});});
 }
 
 /* ═════════ 엑셀 (SheetJS 지연 로드, 실패 시 CSV 폴백) ═════════ */
@@ -742,9 +837,9 @@ const ymd=()=>{const d=new Date();return d.getFullYear()+String(d.getMonth()+1).
 function saveWb(X,aoa,sheet,fname){const ws=X.utils.aoa_to_sheet(aoa);const wb=X.utils.book_new();X.utils.book_append_sheet(wb,ws,sheet);X.writeFile(wb,fname);}
 function csvFallback(aoa,fname){const csv="﻿"+aoa.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")).join("\r\n");const b=new Blob([csv],{type:"text/csv"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=fname.replace(/\.xlsx$/,".csv");a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);toast("엑셀 로드 실패 → CSV로 저장했어요");}
 // 양식
-$("#pTpl").onclick=async()=>{const aoa=[["바코드","상품명","가격"],["8801234567890","예시-코카콜라 500ml",2000],["8801234567891","예시-새우깡",1500]];try{const X=await XLSX_();saveWb(X,aoa,"상품","상품_양식.xlsx");toast("양식 저장됨 — 채워서 불러오기");}catch{csvFallback(aoa,"상품_양식.xlsx");}};
+$("#pTpl").onclick=async()=>{const aoa=[["바코드","상품명","가격","재고"],["8801234567890","예시-코카콜라 500ml",2000,12],["8801234567891","예시-새우깡",1500,5]];try{const X=await XLSX_();saveWb(X,aoa,"상품","상품_양식.xlsx");toast("양식 저장됨 — 채워서 불러오기");}catch{csvFallback(aoa,"상품_양식.xlsx");}};
 // 내보내기 (상품)
-$("#pExport").onclick=async()=>{const aoa=[["바코드","상품명","가격"]].concat(Object.entries(products).map(([c,p])=>[c,p.name,p.price]));try{const X=await XLSX_();saveWb(X,aoa,"상품",`상품_${ymd()}.xlsx`);}catch{csvFallback(aoa,`상품_${ymd()}.xlsx`);}};
+$("#pExport").onclick=async()=>{const aoa=[["바코드","상품명","가격","재고"]].concat(Object.entries(DB.loadProducts()).map(([c,p])=>[c,p.name,p.price,Number(p.stock)||0]));try{const X=await XLSX_();saveWb(X,aoa,"상품",`상품_${ymd()}.xlsx`);}catch{csvFallback(aoa,`상품_${ymd()}.xlsx`);}};
 // 내보내기 (매출)
 $("#sExport").onclick=async()=>{const aoa=[["일시","수단","합계","받은금액","거스름돈","품목"]].concat(sales.map(s=>[new Date(s.at).toLocaleString("ko-KR"),s.tender,s.total,s.received,s.change,s.items.map(i=>`${i.name}x${i.qty}`).join(" / ")]));try{const X=await XLSX_();saveWb(X,aoa,"매출",`매출_${ymd()}.xlsx`);}catch{csvFallback(aoa,`매출_${ymd()}.xlsx`);}};
 // 불러오기 (엑셀/CSV)
@@ -753,7 +848,7 @@ $("#pImportFile").addEventListener("change",async e=>{
   const f=e.target.files[0];if(!f)return;
   try{
     const X=await XLSX_();const buf=new Uint8Array(await f.arrayBuffer());const wb=X.read(buf,{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];const rows=X.utils.sheet_to_json(ws,{header:1});
-    let n=0;rows.forEach((r,i)=>{if(i===0&&/바코드|barcode/i.test(String(r[0])))return;const code=String(r[0]||"").trim(),name=String(r[1]||"").trim(),price=intOf(r[2]);if(code&&name&&Number.isFinite(price)){products[code]={name,price,updated:Date.now()};n++;}});
+    let n=0;rows.forEach((r,i)=>{if(i===0&&/바코드|barcode/i.test(String(r[0])))return;const code=normBarcode(r[0]),name=String(r[1]||"").trim(),price=intOf(r[2]),st=intOf(r[3]);if(code&&name&&Number.isFinite(price)){const prev=Number(products[code]&&products[code].stock)||0;products[code]={name,price,stock:Number.isFinite(st)?st:prev,updated:Date.now()};n++;}});
     DB.saveProducts(products);renderProds();toast(n+"개 등록/갱신됨");
   }catch(err){toast("불러오기 실패 — 파일 형식을 확인하세요");}
   e.target.value="";
