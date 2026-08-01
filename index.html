@@ -36,6 +36,16 @@
   #v-pos.on{display:flex}
   .pos-left{flex:1.5;display:flex;flex-direction:column;gap:12px;min-width:0}
   .pos-right{flex:1;display:flex;flex-direction:column;gap:12px;max-width:420px}
+  .modebar{display:flex;gap:5px;background:#e4e8ee;padding:5px;border-radius:12px}
+  .modebar button{flex:1;border:0;background:transparent;color:var(--ink2);font-size:15px;font-weight:800;padding:11px;border-radius:9px;cursor:pointer}
+  .modebar button.on{background:var(--panel);color:var(--blue);box-shadow:0 1px 3px rgba(16,24,40,.12)}
+  .modebar button[data-m="stockin"].on{color:var(--amber)}
+  .stockin-banner{display:none;background:var(--amber-soft);border:1px solid #ffd8a8;color:#a05e00;border-radius:12px;padding:11px 14px;font-size:13px;font-weight:700}
+  body.stockin .stockin-banner{display:block}
+  body.stockin .paybtn{background:var(--amber);box-shadow:0 8px 18px -6px rgba(245,159,0,.6)}
+  .stk{font-variant-numeric:tabular-nums;font-weight:800}
+  .stk.low{color:var(--red)}
+  .stk.zero{color:var(--muted)}
   .scanrow{display:flex;gap:8px}
   .scan-in{flex:1;font-size:25px;font-weight:800;padding:19px 20px;border:2px solid var(--line2);border-radius:14px;outline:none;min-width:0;transition:.12s;letter-spacing:-.01em}
   .scan-in::placeholder{color:#c0c6cf;font-weight:700}
@@ -131,7 +141,7 @@
   #scannerMode .fin{background:#1a1f29;border-color:#2a3140;color:#fff}
   #scannerMode .fin::placeholder{color:#5b6472}
   .cambox{position:relative;border-radius:14px;overflow:hidden;background:#000;flex:1;min-height:220px}
-  .scanguide{position:absolute;left:6%;right:6%;top:32%;height:30%;border:2px solid rgba(255,255,255,.85);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.30);pointer-events:none}
+  .scanguide{position:absolute;left:4%;right:4%;top:27%;height:46%;border:2px solid rgba(255,255,255,.85);border-radius:12px;box-shadow:0 0 0 9999px rgba(0,0,0,.28);pointer-events:none}
   .camctl{display:flex;gap:10px;align-items:center;background:#161b23;padding:10px 12px;border-radius:12px}
   .camctl button{border:1px solid #2a3140;background:#1a1f29;color:#e6e9ee;border-radius:9px;padding:9px 13px;font-size:17px;cursor:pointer}
   .camctl button.on{background:#f59f00;border-color:#f59f00;color:#111}
@@ -278,8 +288,10 @@
   </div>
   <div class="camctl hide" id="camCtl">
     <button id="scTorch" title="플래시">🔦</button>
+    <button id="scFocus" title="초점 재조정">🎯</button>
     <input type="range" id="scZoom" min="1" max="6" step="0.1" value="1" />
     <span class="zl" id="scZoomLbl">1.0x</span>
+    <span class="zl" id="camRes" style="min-width:74px">—</span>
   </div>
   <div id="scLog" style="color:#9aa4b2;font-size:14px;text-align:center">바코드를 비추면 노트북 장바구니에 담깁니다</div>
 </div>
@@ -331,7 +343,7 @@
 <script>
 "use strict";
 /* ═════════ 버전 (배포마다 올림 — 화면 좌측상단 표시) ═════════ */
-const APP_VER="v1.2";
+const APP_VER="v1.3";
 /* ═════════ 데이터 계층 (P1에서 Supabase로 교체될 경계) ═════════ */
 const DB={KP:"pos_products_v1",KS:"pos_sales_v1",
   loadProducts(){try{return JSON.parse(localStorage.getItem(this.KP))||{}}catch{return{}}},
@@ -409,51 +421,110 @@ let lastCode="",lastAt=0;
 function dedup(c){const now=Date.now();if(c===lastCode&&now-lastAt<1500)return false;lastCode=c;lastAt=now;return true;}
 function loadScriptOnce(src){return new Promise((res,rej)=>{if(document.querySelector(`script[src="${src}"]`))return res();const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
 const WANT=["ean_13","ean_8","upc_a","upc_e","code_128","code_39","codabar","itf"];
+
+/* EAN/UPC 체크섬 — 명백한 오독 1차 차단 */
+function checksumOK(code){
+  if(!/^\d+$/.test(code))return true;              // 숫자형 아닌 포맷은 검사 대상 아님
+  if(![8,12,13].includes(code.length))return true;
+  const d=code.split("").map(Number),chk=d.pop();
+  let sum=0;d.reverse().forEach((n,i)=>{sum+=n*(i%2===0?3:1);});
+  return (10-(sum%10))%10===chk;
+}
+/* 다중 프레임 일치 확인 — 체크섬을 통과하는 오독까지 차단(실 스캐너 방식) */
+const CONFIRM_N=3;
+let pend={code:null,n:0};
+function resetConfirm(){pend={code:null,n:0};}
+function confirmRead(code){
+  if(pend.code===code)pend.n++;else pend={code,n:1};
+  return pend.n>=CONFIRM_N;
+}
+
 async function openCamera(videoEl){
-  // 고해상도 요청 = 선명도(작은 바코드 인식률의 핵심)
-  let stream;
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}}});
-  }catch{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}}});
-  }
+  // 해상도 우선순위: 실제 적용값은 UI에 표시해 진단 가능하게
+  const tries=[
+    {facingMode:{ideal:"environment"},width:{ideal:2560},height:{ideal:1440},frameRate:{ideal:30}},
+    {facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}},
+    {facingMode:{ideal:"environment"}}
+  ];
+  let stream=null,err=null;
+  for(const v of tries){try{stream=await navigator.mediaDevices.getUserMedia({video:v});break;}catch(e){err=e;}}
+  if(!stream)throw err;
   videoEl.srcObject=stream;videoEl.setAttribute("playsinline","");await videoEl.play();
   const track=stream.getVideoTracks()[0];
-  try{ // 연속 자동초점
-    const caps=track.getCapabilities?track.getCapabilities():{};
-    if(caps.focusMode&&caps.focusMode.includes("continuous"))await track.applyConstraints({advanced:[{focusMode:"continuous"}]});
-  }catch{}
+  await refocus(track);
   return {stream,track};
 }
-async function createEngine(videoEl,onCode){
+/* 초점 재시도 (탭 위치 지정 가능) */
+async function refocus(track,x,y){
+  try{
+    const caps=track.getCapabilities?track.getCapabilities():{};
+    const adv=[];
+    if(caps.pointsOfInterest&&x!=null)adv.push({pointsOfInterest:[{x,y}]});
+    const fm=caps.focusMode||[];
+    if(x!=null&&fm.includes("single-shot"))adv.push({focusMode:"single-shot"});
+    else if(fm.includes("continuous"))adv.push({focusMode:"continuous"});
+    if(adv.length)await track.applyConstraints({advanced:adv});
+  }catch{}
+}
+
+/* 가이드 박스 영역만 원본 해상도로 잘라 분석 = 화면 밖 다른 바코드·잡음 배제 */
+const roiCv=document.createElement("canvas"),roiCx=roiCv.getContext("2d",{willReadFrequently:true});
+function roiFrom(v){
+  const vw=v.videoWidth,vh=v.videoHeight;
+  if(!vw||!vh)return null;
+  const cw=Math.round(vw*0.92),ch=Math.round(vh*0.46);
+  roiCv.width=cw;roiCv.height=ch;
+  roiCx.drawImage(v,Math.round((vw-cw)/2),Math.round((vh-ch)/2),cw,ch,0,0,cw,ch);
+  return roiCv;
+}
+
+async function createEngine(videoEl,onCode,onStatus){
   const {stream,track}=await openCamera(videoEl);
+  resetConfirm();
   const stopCam=()=>{try{stream.getTracks().forEach(t=>t.stop());}catch{}videoEl.srcObject=null;};
-  // BarcodeDetector가 1D 포맷을 실제로 지원할 때만 사용 (아니면 ZXing)
+  const accept=c=>{
+    if(!checksumOK(c)){onStatus&&onStatus("bad","오독 차단 "+c);return;}
+    if(!confirmRead(c)){onStatus&&onStatus("confirm",`확인 중 ${pend.n}/${CONFIRM_N} · ${c}`);return;}
+    if(dedup(c)){resetConfirm();onCode(c);}
+  };
   let useNative=false;
   if("BarcodeDetector" in window){
-    try{
-      const sup=await window.BarcodeDetector.getSupportedFormats();
-      useNative=WANT.some(f=>sup.includes(f));
-    }catch{useNative=false;}
+    try{const sup=await window.BarcodeDetector.getSupportedFormats();useNative=WANT.some(f=>sup.includes(f));}catch{useNative=false;}
   }
   if(useNative){
     const sup=await window.BarcodeDetector.getSupportedFormats();
     const det=new window.BarcodeDetector({formats:WANT.filter(f=>sup.includes(f))});
     let run=true,raf=0;
-    const loop=()=>{if(!run)return;det.detect(videoEl).then(cs=>{if(cs&&cs[0]&&cs[0].rawValue&&dedup(cs[0].rawValue))onCode(cs[0].rawValue);}).catch(()=>{});raf=requestAnimationFrame(loop);};
+    const loop=()=>{
+      if(!run)return;
+      const src=roiFrom(videoEl)||videoEl;
+      det.detect(src).then(cs=>{if(cs&&cs[0]&&cs[0].rawValue)accept(cs[0].rawValue);}).catch(()=>{});
+      raf=requestAnimationFrame(loop);
+    };
     loop();
-    return {engine:"native",track,stop(){run=false;cancelAnimationFrame(raf);stopCam();}};
+    return {engine:"native",track,stop(){run=false;cancelAnimationFrame(raf);stopCam();resetConfirm();}};
   }
   await loadScriptOnce("https://unpkg.com/@zxing/library@0.21.3");
   const reader=new window.ZXing.BrowserMultiFormatReader();
-  await reader.decodeFromStream(stream,videoEl,res=>{if(res){const c=res.getText();if(c&&dedup(c))onCode(c);}});
-  return {engine:"zxing",track,stop(){try{reader.reset();}catch{}stopCam();}};
+  await reader.decodeFromStream(stream,videoEl,res=>{if(res)accept(res.getText());});
+  return {engine:"zxing",track,stop(){try{reader.reset();}catch{}stopCam();resetConfirm();}};
 }
-/* 줌·플래시 컨트롤 */
-function bindCamControls(track){
+/* 줌·플래시·초점 컨트롤 */
+function bindCamControls(track,videoEl){
   const ctl=$("#camCtl"),zoom=$("#scZoom"),lbl=$("#scZoomLbl"),torch=$("#scTorch");
   const caps=track&&track.getCapabilities?track.getCapabilities():{};
   ctl.classList.remove("hide");
+  // 실제 적용된 해상도 표시(요청값이 실제로 반영됐는지 진단)
+  const showRes=()=>{const s=track&&track.getSettings?track.getSettings():{};const el=$("#camRes");if(el)el.textContent=(s.width&&s.height)?`${s.width}×${s.height}`:"—";};
+  setTimeout(showRes,400);
+  // 초점 재시도 버튼 + 화면 탭하여 초점
+  const fb=$("#scFocus");
+  if(fb)fb.onclick=async()=>{await refocus(track);toast("초점 재조정");};
+  if(videoEl)videoEl.onclick=async e=>{
+    const r=videoEl.getBoundingClientRect();
+    await refocus(track,(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height);
+    toast("그 지점으로 초점");
+  };
   if(caps.zoom){
     zoom.min=caps.zoom.min;zoom.max=Math.min(caps.zoom.max,8);zoom.step=caps.zoom.step||0.1;zoom.value=caps.zoom.min;
     lbl.textContent=Number(zoom.value).toFixed(1)+"x";zoom.disabled=false;
@@ -470,7 +541,10 @@ $("#camBtn").onclick=()=>posEngine?stopCam():startPosCam();
 async function startPosCam(){
   try{
     $("#camWrap").classList.add("on");$("#camBtn").classList.add("on");
-    posEngine=await createEngine($("#cam"),code=>addByBarcode(code));
+    posEngine=await createEngine($("#cam"),code=>addByBarcode(code),(kind,msg)=>{
+      const el=$("#scanLog");if(el&&kind==="confirm")el.textContent="🔎 "+msg;else if(el&&kind==="bad")el.textContent="⚠️ "+msg;
+    });
+    if(posEngine.track)$("#cam").onclick=async e=>{const r=$("#cam").getBoundingClientRect();await refocus(posEngine.track,(e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height);};
   }catch(err){toast("카메라를 열 수 없어요 — https 또는 localhost에서만 됩니다");stopCam();}
 }
 function stopCam(){if(posEngine){posEngine.stop();posEngine=null;}$("#camWrap").classList.remove("on");$("#camBtn").classList.remove("on");}
@@ -514,10 +588,13 @@ $("#scStart").onclick=async()=>{
   if(!code){toast("노트북 화면의 연결 코드를 입력하세요");return;}
   localStorage.setItem("pos_scanner_code",code);
   try{
-    scEngine=await createEngine($("#scCam"),bc=>sendCode(bc));
-    bindCamControls(scEngine.track);
+    scEngine=await createEngine($("#scCam"),bc=>sendCode(bc),(kind,msg)=>{
+      if(kind==="confirm")$("#scLog").textContent="🔎 "+msg;
+      else if(kind==="bad")$("#scLog").textContent="⚠️ "+msg;
+    });
+    bindCamControls(scEngine.track,$("#scCam"));
     $("#scStart").classList.add("hide");$("#scStop").classList.remove("hide");
-    $("#scLog").textContent="흐리면 15~20cm 떨어뜨리고 줌을 올리세요 · 어두우면 🔦";
+    $("#scLog").textContent="흐리면 화면을 탭해 초점 · 15~20cm 거리 · 어두우면 🔦";
   }catch(err){
     const n=err&&err.name;
     if(n==="NotAllowedError")$("#scLog").textContent="카메라 권한이 막혔어요 — 화면 위에 떠 있는 다른 앱(플로팅 버튼)을 닫고 다시 시도하세요";
