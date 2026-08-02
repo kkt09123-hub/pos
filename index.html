@@ -263,6 +263,19 @@
     <!-- ═══ 백업 ═══ -->
     <section id="v-backup" class="view">
       <div class="wrap">
+        <div class="card pad" style="margin-bottom:14px;border-color:var(--blue)">
+          <p style="margin:0 0 4px;font-weight:800;font-size:16px">💾 자동 파일 저장 <span class="ver">권장</span></p>
+          <p style="margin:0 0 12px;color:var(--ink2);font-size:14px;line-height:1.6">
+            데이터 파일을 한 번 지정하면, 이후 <b>판매·상품 변경 때마다 그 파일에 자동으로 기록</b>됩니다(인터넷 불필요).
+            브라우저 기록을 지워도 파일이 남아 있어 안전합니다. <b>USB나 다른 폴더에 지정하면 그대로 백업</b>이 됩니다.
+          </p>
+          <div class="toolbar">
+            <button class="btn btn-blue" id="fsPick">📁 데이터 파일 지정</button>
+            <button class="btn btn-ghost" id="fsLoad">📂 파일에서 불러오기</button>
+            <button class="btn btn-ghost" id="fsReconnect">🔗 연결 복구</button>
+          </div>
+          <p id="fsState" style="color:var(--muted);font-size:13px;margin:0">아직 파일이 지정되지 않았습니다</p>
+        </div>
         <div class="card pad">
           <p style="margin:0 0 4px;font-weight:800;font-size:16px">전체 백업 / 복원</p>
           <p style="margin:0 0 16px;color:var(--ink2);font-size:14px;line-height:1.6">
@@ -369,13 +382,13 @@
 <script>
 "use strict";
 /* ═════════ 버전 (배포마다 올림 — 화면 좌측상단 표시) ═════════ */
-const APP_VER="v1.5";
+const APP_VER="v1.6";
 /* ═════════ 데이터 계층 (P1에서 Supabase로 교체될 경계) ═════════ */
 const DB={KP:"pos_products_v1",KS:"pos_sales_v1",
   loadProducts(){try{return JSON.parse(localStorage.getItem(this.KP))||{}}catch{return{}}},
-  saveProducts(p){localStorage.setItem(this.KP,JSON.stringify(p))},
+  saveProducts(p){localStorage.setItem(this.KP,JSON.stringify(p));scheduleFileSave();},
   loadSales(){try{return JSON.parse(localStorage.getItem(this.KS))||[]}catch{return[]}},
-  saveSales(s){localStorage.setItem(this.KS,JSON.stringify(s))}};
+  saveSales(s){localStorage.setItem(this.KS,JSON.stringify(s));scheduleFileSave();}};
 let products=DB.loadProducts(), sales=DB.loadSales(), cart=[];
 
 /* ═════════ 유틸 ═════════ */
@@ -832,7 +845,12 @@ function renderProds(){
 
 /* ═════════ 엑셀 (SheetJS 지연 로드, 실패 시 CSV 폴백) ═════════ */
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
-async function XLSX_(){if(window.XLSX)return window.XLSX;await loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js");return window.XLSX;}
+async function XLSX_(){
+  if(window.XLSX)return window.XLSX;
+  try{await loadScript("xlsx.full.min.js");}                                     // 같은 폴더 = 인터넷 불필요
+  catch{await loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js");}
+  return window.XLSX;
+}
 const ymd=()=>{const d=new Date();return d.getFullYear()+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")};
 function saveWb(X,aoa,sheet,fname){const ws=X.utils.aoa_to_sheet(aoa);const wb=X.utils.book_new();X.utils.book_append_sheet(wb,ws,sheet);X.writeFile(wb,fname);}
 function csvFallback(aoa,fname){const csv="﻿"+aoa.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(",")).join("\r\n");const b=new Blob([csv],{type:"text/csv"});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=fname.replace(/\.xlsx$/,".csv");a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);toast("엑셀 로드 실패 → CSV로 저장했어요");}
@@ -867,6 +885,58 @@ function renderSales(){
   $("#recentSales").innerHTML=list.length?list.slice(0,40).map(s=>{const d=new Date(s.at);const t=`${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;const bd=s.tender==="현금"?"var(--green)":s.tender==="카드"?"var(--blue)":"var(--amber)";return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span style="color:var(--muted)">${t} · <span style="color:${bd};font-weight:700">${s.tender}</span> · ${s.items.reduce((a,b)=>a+b.qty,0)}점</span><b>${won(s.total)}</b></div>`;}).join(""):'<div class="cart-empty" style="height:auto;padding:20px;font-size:13px">판매 없음</div>';
 }
 
+/* ═════════ 로컬 파일 자동 저장 (엑셀 프로그램처럼 — 인터넷 불필요) ═════════
+   브라우저 저장소는 "인터넷 기록 삭제" 한 번에 날아감 → 실제 파일에 자동 기록해 대비.
+   파일 핸들은 IndexedDB에 보관해 새로고침·재부팅 후에도 계속 같은 파일에 저장. */
+const FS_OK=("showSaveFilePicker" in window);
+let fileHandle=null,fsTimer=null;
+function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("pos_fs",1);r.onupgradeneeded=()=>r.result.createObjectStore("h");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function idbPut(h){try{const db=await idbOpen();const t=db.transaction("h","readwrite");t.objectStore("h").put(h,"file");}catch{}}
+async function idbGet(){try{const db=await idbOpen();return await new Promise(r=>{const t=db.transaction("h","readonly");const q=t.objectStore("h").get("file");q.onsuccess=()=>r(q.result||null);q.onerror=()=>r(null);});}catch{return null;}}
+function snapshot(){return JSON.stringify({products,sales,ver:APP_VER,savedAt:new Date().toISOString()},null,1);}
+async function saveToFile(){
+  if(!fileHandle)return;
+  try{const w=await fileHandle.createWritable();await w.write(snapshot());await w.close();
+    const el=$("#fsState");if(el)el.textContent="✅ 자동 저장됨 · "+new Date().toLocaleTimeString("ko-KR",{hour12:false})+" · "+fileHandle.name;
+  }catch{const el=$("#fsState");if(el)el.textContent="⚠️ 파일 저장 실패 — 파일 다시 지정하세요";}
+}
+function scheduleFileSave(){if(!fileHandle)return;clearTimeout(fsTimer);fsTimer=setTimeout(saveToFile,600);}
+async function pickDataFile(){
+  try{
+    fileHandle=await window.showSaveFilePicker({suggestedName:"매점POS_데이터.json",types:[{description:"매점 POS 데이터",accept:{"application/json":[".json"]}}]});
+    await idbPut(fileHandle);await saveToFile();toast("이제 이 파일에 자동 저장됩니다");
+  }catch(e){if(e&&e.name!=="AbortError")toast("파일 지정 실패");}
+}
+async function loadDataFile(){
+  try{
+    const [h]=await window.showOpenFilePicker({types:[{description:"매점 POS 데이터",accept:{"application/json":[".json"]}}]});
+    const d=JSON.parse(await (await h.getFile()).text());
+    if(d.products)products=Object.assign({},products,d.products);
+    if(Array.isArray(d.sales)){const ids=new Set(sales.map(s=>s.id));d.sales.forEach(s=>{if(!ids.has(s.id))sales.push(s);});sales.sort((a,b)=>b.at-a.at);}
+    fileHandle=h;await idbPut(h);
+    localStorage.setItem(DB.KP,JSON.stringify(products));localStorage.setItem(DB.KS,JSON.stringify(sales));
+    renderCart();renderBackup();toast("파일에서 복원 완료");await saveToFile();
+  }catch(e){if(e&&e.name!=="AbortError")toast("불러오기 실패");}
+}
+async function reconnectFile(){
+  const h=await idbGet();if(!h)return;
+  try{
+    let p=await h.queryPermission({mode:"readwrite"});
+    if(p!=="granted")p=await h.requestPermission({mode:"readwrite"});
+    if(p==="granted"){fileHandle=h;await saveToFile();toast("파일 연결 복구됨");}
+    else toast("파일 권한이 거부됨");
+  }catch{toast("파일 연결 실패 — 다시 지정하세요");}
+}
+async function initFileHandle(){
+  if(!FS_OK)return;
+  const h=await idbGet();if(!h)return;
+  try{
+    const p=await h.queryPermission({mode:"readwrite"});
+    if(p==="granted"){fileHandle=h;$("#fsState").textContent="✅ 연결됨 · "+h.name;}
+    else $("#fsState").textContent="⚠️ 이전 파일이 있습니다 — [연결 복구]를 눌러주세요";
+  }catch{}
+}
+
 /* ═════════ 백업 ═════════ */
 function download(name,text,type){const b=new Blob([text],{type});const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}
 function renderBackup(){$("#bP").textContent=Object.keys(products).length;$("#bS").textContent=sales.length;}
@@ -876,6 +946,16 @@ $("#impFile").addEventListener("change",e=>{const f=e.target.files[0];if(!f)retu
 
 /* ═════════ 시작 ═════════ */
 $("#verTag").textContent=APP_VER;$("#verTag2").textContent=APP_VER;document.title="매점 POS "+APP_VER;
+// 자동 파일 저장 UI 연결 (미지원 브라우저면 안내)
+if(FS_OK){
+  $("#fsPick").onclick=pickDataFile;$("#fsLoad").onclick=loadDataFile;$("#fsReconnect").onclick=reconnectFile;
+  initFileHandle();
+}else{
+  ["fsPick","fsLoad","fsReconnect"].forEach(id=>{const b=$("#"+id);if(b){b.disabled=true;b.style.opacity=.45;}});
+  $("#fsState").textContent="이 브라우저는 자동 파일 저장을 지원하지 않아요 — 크롬/엣지를 쓰거나 아래 수동 백업을 이용하세요";
+}
+// 오프라인 캐싱(한 번 접속해두면 인터넷 없어도 열림). file:// 로 열면 자동 생략됨
+if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 renderCart();focusScan();window.addEventListener("focus",focusScan);
 </script>
 </body>
