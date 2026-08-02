@@ -378,6 +378,8 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<!-- 단독 실행 파일 빌드 시 여기에 엑셀 라이브러리가 내장됨 (평소엔 비어 있음) -->
+<script id="xlsxlib" type="text/plain"></script>
 
 <script>
 "use strict";
@@ -847,7 +849,18 @@ function renderProds(){
 function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
 async function XLSX_(){
   if(window.XLSX)return window.XLSX;
-  try{await loadScript("xlsx.full.min.js");}                                     // 같은 폴더 = 인터넷 불필요
+  // ① 단독 실행 파일이면 라이브러리가 이 문서 안에 내장돼 있음 (인터넷·외부파일 0)
+  const inl=document.getElementById("xlsxlib");
+  if(inl&&inl.textContent.trim().length>1000){
+    try{
+      const bin=atob(inl.textContent.trim());
+      const bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));
+      (0,eval)(new TextDecoder("utf-8").decode(bytes));
+      if(window.XLSX)return window.XLSX;
+    }catch{}
+  }
+  // ② 같은 폴더 파일 → ③ 최후에만 인터넷
+  try{await loadScript("xlsx.full.min.js");}
   catch{await loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js");}
   return window.XLSX;
 }
