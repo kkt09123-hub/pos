@@ -22,10 +22,12 @@ let out = html.replace(TAG, '<script id="xlsxlib" type="text/plain">' + b64 + "<
 // 단독 파일에서는 외부 파일/서비스워커가 없으므로 표시만 구분
 out = out.replace('const APP_VER="', 'const STANDALONE=true;const APP_VER="');
 
-const target = path.join(dir, "매점POS.html");
-fs.writeFileSync(target, out, "utf8");
+// 배포 폴더로 산출 (파일명은 ASCII — 배치파일이 한글 경로를 오해하는 문제 방지)
+const outDir = path.join(path.dirname(dir), "매점POS_배포");
+fs.mkdirSync(outDir, { recursive: true });
+fs.writeFileSync(path.join(outDir, "POS.html"), out, "utf8");
+fs.copyFileSync(path.join(dir, "사용설명서.txt"), path.join(outDir, "사용설명서.txt"));
 
 const mb = (Buffer.byteLength(out, "utf8") / 1024 / 1024).toFixed(2);
-console.log(`✅ 매점POS.html 생성 완료 (${mb} MB)`);
-console.log(`   엑셀 라이브러리 내장: ${(lib.length / 1024).toFixed(0)} KB`);
-console.log(`   → 이 파일 하나만 복사하면 인터넷 없이 실행됩니다.`);
+console.log(`✅ POS.html 생성 (${mb} MB, 엑셀 라이브러리 ${(lib.length / 1024).toFixed(0)}KB 내장)`);
+console.log(`   배포 폴더: ${outDir}`);
